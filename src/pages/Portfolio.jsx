@@ -6,6 +6,7 @@ import {
 import { XSTOCKS_LIST } from '../data/xstocks'
 import { PROTOCOLS } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
+import { useLivePrices } from '../hooks/useLiveData'
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -28,14 +29,16 @@ const TABS = [
 
 // ─── modal: add position ─────────────────────────────────────────────────────
 
-function AddPositionModal({ onClose }) {
+function AddPositionModal({ onClose, livePrices }) {
   const addPosition = usePortfolioStore(s => s.addPosition)
   const [form, setForm] = useState({
     symbol: 'xAAPL', quantity: '', entryPrice: '', protocol: '', strategy: 'hold', notes: '',
   })
 
   const liveStocks = XSTOCKS_LIST.filter(x => x.status === 'live')
-  const selectedStock = XSTOCKS_LIST.find(x => x.symbol === form.symbol)
+  const staticStock = XSTOCKS_LIST.find(x => x.symbol === form.symbol)
+  const livePrice = livePrices?.[form.symbol]?.price
+  const selectedStock = staticStock ? { ...staticStock, price: livePrice || staticStock.price } : staticStock
   const availableProtocols = PROTOCOLS.filter(p => p.xstocksSupported?.includes(form.symbol))
   const update = (f, v) => setForm(prev => ({ ...prev, [f]: v }))
   const cost = (parseFloat(form.quantity) || 0) * (parseFloat(form.entryPrice) || 0)
@@ -69,8 +72,13 @@ function AddPositionModal({ onClose }) {
               {liveStocks.map(s => <option key={s.symbol} value={s.symbol}>{s.logo} {s.symbol} — {s.name}</option>)}
             </select>
             {selectedStock && (
-              <div style={{ marginTop: 5, fontSize: 12, color: 'var(--text-3)' }}>
+              <div style={{ marginTop: 5, fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 Prix actuel: <strong style={{ color: 'white' }}>${selectedStock.price.toLocaleString()}</strong>
+                {livePrice ? (
+                  <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>LIVE</span>
+                ) : (
+                  <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>INDICATIF</span>
+                )}
               </div>
             )}
           </div>
@@ -126,14 +134,16 @@ function AddPositionModal({ onClose }) {
 
 // ─── DCA Tracker ─────────────────────────────────────────────────────────────
 
-function DCATracker() {
+function DCATracker({ livePrices }) {
   const [dcaSymbol, setDcaSymbol] = useState('xAAPL')
   const [monthlyAmount, setMonthlyAmount] = useState('500')
   const [startPrice, setStartPrice] = useState('')
   const [months, setMonths] = useState(12)
   const [annualGrowth, setAnnualGrowth] = useState(12)
 
-  const stock = XSTOCKS_LIST.find(x => x.symbol === dcaSymbol)
+  const staticStock = XSTOCKS_LIST.find(x => x.symbol === dcaSymbol)
+  const livePrice = livePrices?.[dcaSymbol]?.price
+  const stock = staticStock ? { ...staticStock, price: livePrice || staticStock.price } : staticStock
   const liveStocks = XSTOCKS_LIST.filter(x => x.status === 'live')
 
   const dcaData = useMemo(() => {
@@ -310,11 +320,24 @@ export default function Portfolio() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [activeTab, setActiveTab] = useState('positions')
 
+  // Fetch live prices for all stocks in positions + watchlist
+  const allSymbols = useMemo(() => {
+    const syms = new Set(positions.map(p => p.symbol))
+    watchlist.forEach(s => syms.add(s))
+    // Also add all live stocks so modal/DCA have live prices
+    XSTOCKS_LIST.filter(x => x.status === 'live').forEach(x => syms.add(x.symbol))
+    return [...syms]
+  }, [positions, watchlist])
+
+  const { prices: livePrices, loading: priceLoading } = useLivePrices(allSymbols)
+
   const currentPrices = useMemo(() => {
     const m = {}
-    XSTOCKS_LIST.forEach(x => { m[x.symbol] = x.price })
+    XSTOCKS_LIST.forEach(x => {
+      m[x.symbol] = livePrices[x.symbol]?.price || x.price
+    })
     return m
-  }, [])
+  }, [livePrices])
 
   const enriched = useMemo(() => positions.map(pos => {
     const currentPrice = currentPrices[pos.symbol] || pos.entryPrice
@@ -361,7 +384,7 @@ export default function Portfolio() {
 
   return (
     <div>
-      {showAddModal && <AddPositionModal onClose={() => setShowAddModal(false)} />}
+      {showAddModal && <AddPositionModal onClose={() => setShowAddModal(false)} livePrices={livePrices} />}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
@@ -395,7 +418,7 @@ export default function Portfolio() {
       </div>
 
       {/* ── DCA tab — always available ─────────────────────────────────────── */}
-      {activeTab === 'dca' && <DCATracker />}
+      {activeTab === 'dca' && <DCATracker livePrices={livePrices} />}
 
       {/* ── Positions tab ─────────────────────────────────────────────────── */}
       {activeTab === 'positions' && (
@@ -504,7 +527,14 @@ export default function Portfolio() {
                           </td>
                           <td style={{ fontWeight: 600 }}>{pos.quantity}</td>
                           <td>${pos.entryPrice.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
-                          <td style={{ fontWeight: 700 }}>${pos.currentPrice.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{ fontWeight: 700 }}>${pos.currentPrice.toLocaleString('en', { maximumFractionDigits: 2 })}</span>
+                              {livePrices[pos.symbol]?.price && (
+                                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+                              )}
+                            </div>
+                          </td>
                           <td style={{ color: 'var(--text-2)' }}>${pos.cost.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
                           <td style={{ fontWeight: 700 }}>${pos.currentValue.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
                           <td>
@@ -586,6 +616,8 @@ export default function Portfolio() {
                   {watchlist.map(sym => {
                     const s = XSTOCKS_LIST.find(x => x.symbol === sym)
                     if (!s) return null
+                    const wlPrice = livePrices[sym]?.price || s.price
+                    const isLive = !!livePrices[sym]?.price
                     return (
                       <tr key={sym}>
                         <td>
@@ -597,7 +629,16 @@ export default function Portfolio() {
                             </div>
                           </div>
                         </td>
-                        <td style={{ fontWeight: 700 }}>${s.price.toLocaleString()}</td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontWeight: 700 }}>${wlPrice.toLocaleString()}</span>
+                            {isLive ? (
+                              <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'rgba(16,185,129,0.15)', color: '#10b981' }}>LIVE</span>
+                            ) : (
+                              <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>IND.</span>
+                            )}
+                          </div>
+                        </td>
                         <td style={{ color: s.change24h >= 0 ? '#4ade80' : '#f87171', fontWeight: 600 }}>
                           {s.change24h >= 0 ? '▲' : '▼'} {Math.abs(s.change24h)}%
                         </td>
