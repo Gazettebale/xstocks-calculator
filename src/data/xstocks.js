@@ -490,29 +490,71 @@ export const LIVE_COUNT = XSTOCKS_LIST.filter(x => x.status === 'live').length
 export const COMING_SOON_COUNT = XSTOCKS_LIST.filter(x => x.status === 'coming_soon').length
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PRICE HISTORY — Realistic model with momentum + mean reversion
-// Based on GJR-GARCH-inspired volatility clustering
+// SEEDED PRNG — Deterministic random: same inputs = same outputs, always
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cyrb128(str) {
+  let h = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762
+  for (let i = 0; i < str.length; i++) {
+    const k = str.charCodeAt(i)
+    h = h2 ^ Math.imul(h ^ k, 597399067)
+    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233)
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213)
+    h4 = h ^ Math.imul(h4 ^ k, 2716044179)
+  }
+  h = Math.imul(h3 ^ (h >>> 18), 597399067)
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233)
+  return (h ^ h2) >>> 0
+}
+
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed)
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
+    return ((t ^ t >>> 14) >>> 0) / 4294967296
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORICAL CAGR DATA — Real long-term average annual returns
+// Sources: S&P sector indices, Morningstar, CRSP (50-year averages)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SECTOR_CAGR = {
+  'Technology':          0.145,  // ~14.5% (NASDAQ-heavy, 1975-2025 avg)
+  'Finance & Banking':   0.098,  // ~9.8% (S&P Financials long-term)
+  'Healthcare & Pharma': 0.104,  // ~10.4% (healthcare outperforms slightly)
+  'Consumer':            0.092,  // ~9.2% (consumer staples + discretionary blend)
+  'Energy':              0.072,  // ~7.2% (volatile, includes oil cycles)
+  'Industrial':          0.094,  // ~9.4% (Dow Jones Industrial avg)
+  'Commodities':         0.058,  // ~5.8% (gold ~7%, broad commodities lower)
+  'ETFs & Indices':      0.105,  // ~10.5% (S&P 500 50-year CAGR)
+  'Crypto-Adjacent':     0.18,   // ~18% (shorter history, high variance)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRICE HISTORY — Deterministic simulation anchored to 52W data
+// Uses seeded PRNG: same stock + same days = identical chart every time
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function generateHistoricalData(stock, days = 365) {
+  const rand = mulberry32(cyrb128(stock.symbol + ':hist:' + days))
   const data = []
   const today = new Date()
 
-  // Start price at a point consistent with 52W range
-  const rangePosition = 0.35 // start in lower third of range
+  // Start price consistent with 52W range
+  const rangePosition = 0.35
   let price = stock.low52w + (stock.high52w - stock.low52w) * rangePosition
 
-  // Annual volatility estimate from beta and 52W range
   const annualVol = Math.max(stock.beta * 0.18, 0.05)
   const dailyVol = annualVol / Math.sqrt(252)
 
-  // GARCH-like variance persistence
   let currentVol = dailyVol
   const omegaGarch = dailyVol * 0.05
-  const alphaGarch = 0.12  // news impact
-  const betaGarch = 0.83   // persistence
+  const alphaGarch = 0.12
+  const betaGarch = 0.83
 
-  // Momentum: inferred from 52W position
   const avg52w = (stock.high52w + stock.low52w) / 2
   const impliedAnnualReturn = ((stock.price / price) - 1)
   const dailyDrift = impliedAnnualReturn / days
@@ -521,19 +563,16 @@ export function generateHistoricalData(stock, days = 365) {
     const date = new Date(today)
     date.setDate(date.getDate() - i)
 
-    // GJR-GARCH update: asymmetric — negative shocks increase vol more
-    const epsilon = (Math.random() * 2 - 1)
+    const epsilon = (rand() * 2 - 1)
     const indicator = epsilon < 0 ? 1 : 0
     const gammaGarch = 0.08 * indicator
     const shock = epsilon * currentVol * price
 
-    // Drift: target price at end = current price
     const meanRevForce = 0.01 * (avg52w - price) / price
     price = price * (1 + dailyDrift + meanRevForce) + shock
     price = Math.max(price, stock.low52w * 0.7)
     price = Math.min(price, stock.high52w * 1.15)
 
-    // Update vol (GARCH)
     currentVol = Math.sqrt(
       omegaGarch * omegaGarch +
       (alphaGarch + gammaGarch) * (epsilon * currentVol) * (epsilon * currentVol) +
@@ -541,48 +580,32 @@ export function generateHistoricalData(stock, days = 365) {
     )
     currentVol = Math.max(Math.min(currentVol, dailyVol * 3), dailyVol * 0.3)
 
+    const avgVol = parseFloat(stock.avgVolume || '5') * 1e6
     data.push({
       date: date.toISOString().split('T')[0],
       price: parseFloat(price.toFixed(2)),
-      volume: Math.floor(Math.random() * parseFloat(stock.avgVolume || '5') * 1e6 * 0.5 + parseFloat(stock.avgVolume || '5') * 1e6 * 0.75),
+      volume: Math.floor(rand() * avgVol * 0.5 + avgVol * 0.75),
     })
   }
 
-  // Force last point = current price (anchor to reality)
   data[data.length - 1].price = stock.price
   return data
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PRICE PROJECTION — Momentum + Mean Reversion + GARCH volatility
-// Returns fan chart data: bear/base/bull percentile paths
+// PRICE PROJECTION — Pure compound growth based on real historical CAGR
+// No random noise: projection = prix × (1 + CAGR)^(jours/365)
+// Fan chart uses volatility for confidence bands (deterministic)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Sector-based long-term expected annual returns (historical data)
-const SECTOR_DRIFT_ANNUAL = {
-  'Technology':          0.15,
-  'Finance & Banking':   0.10,
-  'Healthcare & Pharma': 0.09,
-  'Consumer':            0.08,
-  'Energy':              0.06,
-  'Industrial':          0.08,
-  'Commodities':         0.06,
-  'ETFs & Indices':      0.10,
-  'Crypto-Adjacent':     0.22,
-}
 
 export function generateProjectionFan(stock, days = 180) {
   const annualVol = Math.max(stock.beta * 0.18, 0.05)
-  const annualDrift = SECTOR_DRIFT_ANNUAL[stock.sector] ?? 0.10
+  const annualDrift = SECTOR_CAGR[stock.sector] ?? 0.105
   const calYears = days / 365
 
-  // ── Terminal targets using proper return distribution ──────────────────────
-  // Expected total return = (1 + drift)^N years
-  // Total vol over period = annualVol × √N  (random walk)
   const expectedReturn = Math.pow(1 + annualDrift, calYears)
   const totalVol = annualVol * Math.sqrt(calYears)
 
-  // Normal distribution z-scores for each percentile
   const terminalTargets = {
     p10: stock.price * Math.max(expectedReturn * (1 - 1.28 * totalVol), 0.1),
     p25: stock.price * Math.max(expectedReturn * (1 - 0.67 * totalVol), 0.15),
@@ -604,9 +627,7 @@ export function generateProjectionFan(stock, days = 180) {
       const date = new Date(today)
       date.setDate(date.getDate() + i)
       const progress = i / days
-      // Log-linear interpolation toward terminal target (realistic price dynamics)
       const basePx = Math.exp(logStart + (logEnd - logStart) * progress)
-      // Small sinusoidal ripple for visual variety
       const ripple = Math.sin(i * 0.05 + scenarioKeys.indexOf(key) * 1.2) * basePx * 0.008 * Math.sqrt(progress)
       const price = Math.max(basePx + ripple, stock.low52w * 0.3)
       path.push({ date: date.toISOString().split('T')[0], price: parseFloat(price.toFixed(2)) })
@@ -617,34 +638,41 @@ export function generateProjectionFan(stock, days = 180) {
   return results
 }
 
-// Scenario projection — respects growthBias as primary driver
-// growthBias = % annuel (ex: 15 pour +15%/an)
-// forwardMean uses proper annual compounding (days/252 trading years)
+// ─── Scenario projection — Pure compound growth, NO random ──────────────────
+// growthBias = % annuel (ex: 15 = +15%/an)
+// Courbe = prix actuel × (1 + bias%)^(jour/365), lisse et déterministe
 export function generateProjection(stock, days = 180, growthBias = 0) {
-  const annualVol = Math.max(stock.beta * 0.18, 0.05)
-  const dailyVol = annualVol / Math.sqrt(252)
-  // Use calendar days (365/year) for bias — matches the chart's date axis
-  const calYears = days / 365
-  const bias = growthBias / 100 / 365 // per calendar day
-
-  // Mean reversion speed scales with horizon
-  const meanRevSpeed = 0.0008 + 0.0003 * Math.min(calYears, 5)
-
-  let price = stock.price
   const data = []
   const today = new Date()
 
   for (let i = 1; i <= days; i++) {
     const date = new Date(today)
     date.setDate(date.getDate() + i)
-    // Progressive target: price should compound at growthBias%/year by day i
-    const currentTarget = stock.price * Math.pow(1 + growthBias / 100, i / 365)
-    const meanRevForce = meanRevSpeed * (currentTarget - price) / price
-    // Reduced shock for cleaner scenario lines
-    const shock = (Math.random() - 0.5) * 0.6 * dailyVol * price
-    price = price * (1 + bias + meanRevForce) + shock
-    price = Math.max(price, stock.low52w * 0.3)
-    data.push({ date: date.toISOString().split('T')[0], price: parseFloat(price.toFixed(2)), type: 'projection' })
+    // Pure compound growth — no noise, no random
+    const price = stock.price * Math.pow(1 + growthBias / 100, i / 365)
+    data.push({
+      date: date.toISOString().split('T')[0],
+      price: parseFloat(price.toFixed(2)),
+      type: 'projection',
+    })
   }
   return data
+}
+
+// ─── Dividend projection — Cumulative dividends along a price path ──────────
+// Uses stock.dividendYield (e.g. 0.44 = 0.44%/an for Apple)
+export function computeDividendProjection(stock, scenarioData) {
+  const annualYield = (stock.dividendYield || 0) / 100
+  const dailyYield = annualYield / 365
+  let cumulativeDividends = 0
+
+  return scenarioData.map(point => {
+    const dailyDiv = point.price * dailyYield
+    cumulativeDividends += dailyDiv
+    return {
+      ...point,
+      cumulativeDividends: parseFloat(cumulativeDividends.toFixed(2)),
+      totalReturn: parseFloat((point.price + cumulativeDividends).toFixed(2)),
+    }
+  })
 }

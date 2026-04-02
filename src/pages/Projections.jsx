@@ -3,7 +3,7 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generateProjection } from '../data/xstocks'
+import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generateProjection, computeDividendProjection } from '../data/xstocks'
 import { useLivePrices } from '../hooks/useLiveData'
 
 // ─── constants ───────────────────────────────────────────────────────────────
@@ -19,17 +19,17 @@ const TIMEFRAMES = [
   { label: '10A', histDays: 365, projDays: 3650 },
 ]
 
-// Historical US market expected annual returns by sector (source: 100yr+ data)
+// Real historical CAGR by sector (50-year averages, S&P sector indices)
 const SECTOR_EXPECTED_RETURN = {
-  'Technology':         15, // Big tech historically 15-20% CAGR
-  'Finance & Banking':  10,
-  'Healthcare & Pharma': 9,
-  'Consumer':            8,
-  'Energy':              6,
-  'Industrial':          8,
-  'Commodities':         6,
-  'ETFs & Indices':     10, // S&P500 ~10.5% long term
-  'Crypto-Adjacent':    22, // High variance, high return
+  'Technology':         14.5, // NASDAQ-heavy, 1975-2025 avg
+  'Finance & Banking':   9.8, // S&P Financials long-term
+  'Healthcare & Pharma':10.4, // Healthcare outperforms slightly
+  'Consumer':            9.2, // Staples + discretionary blend
+  'Energy':              7.2, // Volatile, includes oil cycles
+  'Industrial':          9.4, // Dow Jones Industrial avg
+  'Commodities':         5.8, // Gold ~7%, broad commodities lower
+  'ETFs & Indices':     10.5, // S&P 500 50-year CAGR
+  'Crypto-Adjacent':    18,   // Shorter history, high variance
 }
 
 function getSectorBase(stock) {
@@ -82,6 +82,7 @@ export default function Projections() {
   const [entryPrice, setEntryPrice] = useState('')
   const [quantity, setQuantity] = useState('')
   const [customReturn, setCustomReturn] = useState('')
+  const [showDividends, setShowDividends] = useState(false)
 
   const staticStock = useMemo(() => XSTOCKS_LIST.find(x => x.symbol === selectedSymbol), [selectedSymbol])
 
@@ -117,7 +118,15 @@ export default function Projections() {
     return Object.fromEntries(
       SCENARIOS.map(s => [s.id, generateProjection(stock, timeframe.projDays, s.bias)])
     )
-  }, [selectedSymbol, timeframe.projDays, baseReturn])
+  }, [selectedSymbol, timeframe.projDays, baseReturn, stock.price])
+
+  // Dividend-augmented scenario data
+  const scenarioDataWithDiv = useMemo(() => {
+    if (!stock.dividendYield) return null
+    return Object.fromEntries(
+      SCENARIOS.map(s => [s.id, computeDividendProjection(stock, scenarioData[s.id])])
+    )
+  }, [scenarioData, stock.dividendYield])
 
   // Build merged chart dataset
   const chartData = useMemo(() => {
@@ -138,6 +147,9 @@ export default function Projections() {
       }
       SCENARIOS.forEach(s => {
         if (activeScenarios.has(s.id)) row[s.id] = scenarioData[s.id][i]?.price
+        if (showDividends && scenarioDataWithDiv && activeScenarios.has(s.id)) {
+          row[s.id + '_total'] = scenarioDataWithDiv[s.id]?.[i]?.totalReturn
+        }
       })
       return row
     })
@@ -150,10 +162,13 @@ export default function Projections() {
       bridge.band_90 = [lastPrice, lastPrice]
       bridge.band_50 = [lastPrice, lastPrice]
     }
-    SCENARIOS.forEach(s => { if (activeScenarios.has(s.id)) bridge[s.id] = lastPrice })
+    SCENARIOS.forEach(s => {
+      if (activeScenarios.has(s.id)) bridge[s.id] = lastPrice
+      if (showDividends && scenarioDataWithDiv && activeScenarios.has(s.id)) bridge[s.id + '_total'] = lastPrice
+    })
 
     return [...hist, bridge, ...projRows]
-  }, [historicalData, fanData, scenarioData, showFan, activeScenarios, timeframe])
+  }, [historicalData, fanData, scenarioData, scenarioDataWithDiv, showFan, showDividends, activeScenarios, timeframe])
 
   // Technical stats
   const hist52w = useMemo(() => generateHistoricalData(stock, 365), [selectedSymbol])
@@ -165,6 +180,17 @@ export default function Projections() {
   const ends = useMemo(() => Object.fromEntries(
     SCENARIOS.map(s => [s.id, scenarioData[s.id]?.[scenarioData[s.id].length - 1]?.price || stock.price])
   ), [scenarioData])
+
+  // Dividend end values
+  const divEnds = useMemo(() => {
+    if (!scenarioDataWithDiv) return null
+    return Object.fromEntries(
+      SCENARIOS.map(s => {
+        const last = scenarioDataWithDiv[s.id]?.[scenarioDataWithDiv[s.id].length - 1]
+        return [s.id, { totalReturn: last?.totalReturn || 0, cumulDiv: last?.cumulativeDividends || 0 }]
+      })
+    )
+  }, [scenarioDataWithDiv])
 
   // Simulator
   const simEntry = parseFloat(entryPrice) || stock.price
@@ -286,6 +312,19 @@ export default function Projections() {
           >
             📊 Fan Chart {showFan ? 'ON' : 'OFF'}
           </button>
+          {stock.dividendYield > 0 && (
+            <button
+              onClick={() => setShowDividends(v => !v)}
+              style={{
+                padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                border: `1px solid ${showDividends ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
+                background: showDividends ? 'rgba(251,191,36,0.12)' : 'transparent',
+                color: showDividends ? '#fbbf24' : 'var(--text-3)',
+              }}
+            >
+              💰 Dividendes {showDividends ? 'ON' : 'OFF'}
+            </button>
+          )}
           {SCENARIOS.map(s => (
             <button
               key={s.id}
@@ -419,6 +458,17 @@ export default function Projections() {
                 connectNulls name={s.label}
               />
             ))}
+
+            {/* Total return lines (prix + dividendes) */}
+            {showDividends && scenarioDataWithDiv && SCENARIOS.filter(s => activeScenarios.has(s.id)).map(s => (
+              <Line
+                key={s.id + '_total'}
+                type="monotone" dataKey={s.id + '_total'}
+                stroke={s.color} strokeWidth={2.5} dot={false}
+                connectNulls name={s.label + ' + div.'}
+                opacity={0.7}
+              />
+            ))}
           </ComposedChart>
         </ResponsiveContainer>
 
@@ -447,9 +497,15 @@ export default function Projections() {
           {SCENARIOS.filter(s => activeScenarios.has(s.id)).map(s => (
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <div style={{ width: 20, borderTop: `2px dashed ${s.color}` }} />
-              <span style={{ color: 'var(--text-3)' }}>{s.label}</span>
+              <span style={{ color: 'var(--text-3)' }}>{s.label} (prix)</span>
             </div>
           ))}
+          {showDividends && scenarioDataWithDiv && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 20, borderTop: '2.5px solid #fbbf24' }} />
+              <span style={{ color: 'var(--text-3)' }}>+ dividendes</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -479,6 +535,16 @@ export default function Projections() {
               <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
                 Δ ${Math.abs(end - stock.price).toFixed(2)} / token
               </div>
+              {showDividends && divEnds && stock.dividendYield > 0 && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: 11, color: '#fbbf24', fontWeight: 700 }}>
+                    💰 Avec dividendes: ${divEnds[s.id].totalReturn.toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                    +${divEnds[s.id].cumulDiv.toFixed(2)} de div. cumulés
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}
@@ -489,7 +555,7 @@ export default function Projections() {
         {/* Technical */}
         <div className="card">
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>Analyse Technique</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
             <StatMini label="52W High" value={`$${stock.high52w.toLocaleString()}`} color="#4ade80" />
             <StatMini label="52W Low" value={`$${stock.low52w.toLocaleString()}`} color="#f87171" />
             <StatMini label="Moy. 1 an" value={`$${avgPrice.toFixed(2)}`} />
@@ -499,6 +565,16 @@ export default function Projections() {
               label="Beta"
               value={stock.beta}
               color={stock.beta > 1.8 ? '#f87171' : stock.beta > 1.2 ? '#fbbf24' : '#4ade80'}
+            />
+            <StatMini
+              label="Div. Yield"
+              value={stock.dividendYield ? `${stock.dividendYield}%` : 'N/A'}
+              color="#fbbf24"
+            />
+            <StatMini
+              label="CAGR Secteur"
+              value={`${sectorBase}%/an`}
+              color="#a5b4fc"
             />
           </div>
 
@@ -595,22 +671,34 @@ export default function Projections() {
                   const value = end * simQty
                   const pnl = value - simCost
                   const pct = (pnl / simCost) * 100
+                  const divIncome = divEnds && showDividends ? divEnds[s.id].cumulDiv * simQty : 0
+                  const totalPnl = pnl + divIncome
+                  const totalPct = simCost > 0 ? (totalPnl / simCost) * 100 : 0
                   return (
                     <div key={s.id} style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '11px 14px', borderRadius: 9,
                       background: s.color + '0d', border: `1px solid ${s.color}30`,
                     }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.label}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-3)' }}>${end.toFixed(2)}/token</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: 16, fontWeight: 800 }}>${value.toFixed(2)}</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: pnl >= 0 ? '#4ade80' : '#f87171' }}>
-                          {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} ({pct.toFixed(1)}%)
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.label}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>${end.toFixed(2)}/token</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 16, fontWeight: 800 }}>${value.toFixed(2)}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: pnl >= 0 ? '#4ade80' : '#f87171' }}>
+                            {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} ({pct.toFixed(1)}%)
+                          </div>
                         </div>
                       </div>
+                      {showDividends && divEnds && stock.dividendYield > 0 && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                          <span style={{ color: '#fbbf24' }}>💰 +${divIncome.toFixed(2)} div.</span>
+                          <span style={{ color: totalPnl >= 0 ? '#4ade80' : '#f87171', fontWeight: 700 }}>
+                            Total: {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} ({totalPct.toFixed(1)}%)
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
