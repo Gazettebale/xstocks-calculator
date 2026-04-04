@@ -1,495 +1,643 @@
 import { useState, useMemo } from 'react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { PROTOCOLS, SOLANA_PROTOCOLS, TOTAL_TVL, getProtocolsForStock, calcLendingNetApy, RISK_LABELS } from '../data/protocols'
+import { useLiveTVLs, useLiveYields } from '../hooks/useLiveData'
+import { formatTVL } from '../services/liveData'
 import { XSTOCKS_LIST } from '../data/xstocks'
-import { PROTOCOLS, SOLANA_PROTOCOLS, PROTOCOL_TYPES, RISK_LABELS, calcLendingNetApy, TOTAL_TVL } from '../data/protocols'
-import { useLiveTVLs } from '../hooks/useLiveData'
 
-// Only Solana DeFi protocols (excludes Hyperliquid L1 and points-only programs from cards)
+// Only Solana DeFi protocols (excludes Hyperliquid L1 and points-only programs)
 const DEFI_PROTOCOLS = SOLANA_PROTOCOLS.filter(p => p.solanaDefi !== false && !p.isPointsProgram)
 
-// Category groups for protocol tab display
-const CATEGORY_GROUPS = [
-  { key: 'swap',    label: '🔄 Swaps & Aggregateurs', desc: 'Meilleure exécution pour swapper vos xStocks' },
-  { key: 'lp',     label: '🌊 Liquidité (AMM / LP)',  desc: 'Fournir liquidité et capter les fees de trading' },
-  { key: 'lending',label: '🏦 Lending & Borrowing',   desc: 'Déposer en collatéral, emprunter ou prêter' },
-  { key: 'vault',  label: '🔒 Vaults & Points',       desc: 'Stratégies automatisées et programmes de points' },
-]
+// ── Yield Explorer helpers ──────────────────────────────────────────────────
 
-const STRATEGIES = [
-  { id: 'supply', label: 'Supply / Dépôt', icon: '💰', desc: 'Déposer et percevoir intérêts + rewards' },
-  { id: 'leveraged', label: 'Levier (Boucle)', icon: '🔄', desc: 'Supply → Borrow → Re-supply pour amplifier' },
-  { id: 'lp', label: 'Liquidité LP', icon: '🌊', desc: 'Fournir liquidité, capter les fees de trading' },
-  { id: 'perp', label: 'Perp / Funding', icon: '⚡', desc: 'Positions perps, capter funding rates' },
-]
+function SortIcon({ active, dir }) {
+  if (!active) return <span style={{ opacity: 0.3, fontSize: 10, marginLeft: 4 }}>&#9650;&#9660;</span>
+  return <span style={{ fontSize: 10, marginLeft: 4, color: '#00e4b5' }}>{dir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+}
 
-function ProtocolCard({ protocol, liveTvl }) {
+function LoadingPulse({ rows = 6 }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} style={{
+          height: 42, borderRadius: 8,
+          background: 'linear-gradient(90deg, var(--card) 25%, rgba(255,255,255,0.04) 50%, var(--card) 75%)',
+          backgroundSize: '200% 100%',
+          animation: 'shimmer 1.5s infinite',
+        }} />
+      ))}
+      <style>{`@keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
+    </div>
+  )
+}
+
+// ── Protocol Card (Overview tab) ────────────────────────────────────────────
+
+function ProtocolCard({ protocol, liveTvl, liveApyRange, poolCount }) {
   const hasAirdrop = protocol.airdrop?.active
   const isUrgent = protocol.airdrop?.urgency === 'high'
   const displayTvl = liveTvl ?? protocol.tvl
+  const xStocksCount = protocol.xstocksSupported?.length || 0
+
+  const apyMin = liveApyRange?.min ?? protocol.supplyApy?.min ?? 0
+  const apyMax = liveApyRange?.max ?? protocol.supplyApy?.max ?? 0
+  const hasApy = apyMax > 0
+
+  const riskInfo = RISK_LABELS[protocol.risk] || RISK_LABELS.medium
+  const riskColors = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' }
 
   return (
     <a
       href={protocol.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="protocol-card"
-      style={{ borderColor: hasAirdrop ? (isUrgent ? 'rgba(236,72,153,0.3)' : 'rgba(99,102,241,0.2)') : undefined }}
+      style={{
+        display: 'block',
+        background: 'var(--card)',
+        border: `1px solid ${hasAirdrop ? (isUrgent ? 'rgba(236,72,153,0.35)' : 'rgba(99,102,241,0.25)') : 'var(--border)'}`,
+        borderRadius: 14,
+        padding: '18px 20px',
+        textDecoration: 'none',
+        color: 'var(--text)',
+        transition: 'all 0.2s ease',
+        cursor: 'pointer',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.borderColor = protocol.color + '60'
+        e.currentTarget.style.transform = 'translateY(-2px)'
+        e.currentTarget.style.boxShadow = `0 8px 24px ${protocol.color}15`
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.borderColor = hasAirdrop ? (isUrgent ? 'rgba(236,72,153,0.35)' : 'rgba(99,102,241,0.25)') : 'var(--border)'
+        e.currentTarget.style.transform = 'translateY(0)'
+        e.currentTarget.style.boxShadow = 'none'
+      }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
-            width: 40, height: 40, borderRadius: 10,
-            background: protocol.color + '20', border: `1px solid ${protocol.color}30`,
+            width: 38, height: 38, borderRadius: 10,
+            background: protocol.color + '18',
+            border: `1px solid ${protocol.color}30`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 20, flexShrink: 0,
+            fontSize: 19, flexShrink: 0,
           }}>{protocol.logo}</div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{protocol.name}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{protocol.type} · {protocol.chain}</div>
+            <div style={{ fontWeight: 700, fontSize: 14.5, letterSpacing: '-0.01em' }}>{protocol.name}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>{protocol.type}</div>
           </div>
         </div>
-        <div style={{ display: 'flex', flex: 'column', gap: 4, alignItems: 'flex-end' }}>
-          <span className={`badge ${RISK_LABELS[protocol.risk].class}`} style={{ fontSize: 10.5 }}>
-            {RISK_LABELS[protocol.risk].label}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 6,
+            background: riskColors[protocol.risk] + '18',
+            color: riskColors[protocol.risk],
+            border: `1px solid ${riskColors[protocol.risk]}30`,
+          }}>
+            {riskInfo.label}
           </span>
+          {protocol.earlyStage && (
+            <span style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 6px', borderRadius: 5, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>
+              Early Stage
+            </span>
+          )}
         </div>
       </div>
 
-      <div style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 14, lineHeight: 1.5 }}>
-        {protocol.description}
-      </div>
-
-      {/* APY Row */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-        {protocol.supplyApy.max > 0 ? (
-          <>
-            <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 8, padding: '8px 12px', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Supply APY</div>
-              <div style={{ fontWeight: 800, fontSize: 17, color: '#4ade80' }}>
-                {protocol.supplyApy.min.toFixed(1)}–{protocol.supplyApy.max.toFixed(1)}%
-              </div>
+      {/* Metrics row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
+        {/* TVL */}
+        <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '8px 10px', border: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 9.5, color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>TVL</div>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#00e4b5' }}>{displayTvl || 'N/A'}</div>
+          {liveTvl && <div style={{ fontSize: 8.5, color: '#10b981', fontWeight: 700, marginTop: 2 }}>LIVE</div>}
+        </div>
+        {/* APY */}
+        <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '8px 10px', border: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 9.5, color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>APY Range</div>
+          {hasApy ? (
+            <div style={{ fontWeight: 800, fontSize: 15, color: '#4ade80' }}>
+              {apyMin.toFixed(1)}–{apyMax.toFixed(1)}%
             </div>
-            {protocol.rewardApy > 0 && (
-              <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 8, padding: '8px 12px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Rewards</div>
-                <div style={{ fontWeight: 800, fontSize: 17, color: '#a5b4fc' }}>
-                  +{protocol.rewardApy}% {protocol.rewards[0]}
-                </div>
-              </div>
-            )}
-            {protocol.borrowApr.max > 0 && (
-              <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 8, padding: '8px 12px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Borrow APR</div>
-                <div style={{ fontWeight: 800, fontSize: 17, color: '#f59e0b' }}>
-                  {protocol.borrowApr.min.toFixed(1)}–{protocol.borrowApr.max.toFixed(1)}%
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div style={{ flex: 1, background: 'linear-gradient(135deg, rgba(236,72,153,0.08), rgba(245,158,11,0.05))', borderRadius: 8, padding: '10px 14px', border: '1px solid rgba(236,72,153,0.25)' }}>
-            <div style={{ fontSize: 11, color: '#f9a8d4', fontWeight: 700, marginBottom: 4 }}>🪂 AIRDROP ACTIF — Points en cours</div>
-            <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{protocol.airdrop?.title}</div>
-          </div>
-        )}
+          ) : (
+            <div style={{ fontWeight: 700, fontSize: 13, color: '#f9a8d4' }}>Points Only</div>
+          )}
+          {liveApyRange && <div style={{ fontSize: 8.5, color: '#10b981', fontWeight: 700, marginTop: 2 }}>LIVE</div>}
+        </div>
+        {/* Rewards */}
+        <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '8px 10px', border: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 9.5, color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Rewards</div>
+          {protocol.rewardApy > 0 ? (
+            <div style={{ fontWeight: 800, fontSize: 15, color: '#a5b4fc' }}>+{protocol.rewardApy}%</div>
+          ) : (
+            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-3)' }}>{protocol.rewards?.[0] || '---'}</div>
+          )}
+          {protocol.rewards?.[0] && protocol.rewardApy > 0 && (
+            <div style={{ fontSize: 8.5, color: '#a5b4fc', fontWeight: 600, marginTop: 2 }}>{protocol.rewards[0]}</div>
+          )}
+        </div>
       </div>
 
-      {/* Airdrop Banner */}
-      {hasAirdrop && protocol.supplyApy.max > 0 && (
+      {/* Airdrop banner */}
+      {hasAirdrop && (
         <div style={{
           padding: '8px 12px', borderRadius: 8, marginBottom: 12,
-          background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)',
-          fontSize: 12, color: '#a5b4fc',
+          background: isUrgent ? 'rgba(236,72,153,0.08)' : 'rgba(99,102,241,0.08)',
+          border: `1px solid ${isUrgent ? 'rgba(236,72,153,0.25)' : 'rgba(99,102,241,0.2)'}`,
+          fontSize: 11.5, color: isUrgent ? '#f9a8d4' : '#a5b4fc',
+          display: 'flex', alignItems: 'center', gap: 6,
         }}>
-          🪂 <strong>{protocol.airdrop.title}</strong> — {protocol.airdrop.description.slice(0, 80)}...
+          <span style={{ fontSize: 13 }}>&#127978;</span>
+          <strong>{protocol.airdrop.title}</strong>
         </div>
       )}
 
-      {/* Bottom Row */}
+      {/* Footer row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>TVL:</span>
-          <span style={{ fontSize: 11.5, fontWeight: 700 }}>{displayTvl}</span>
-          {liveTvl && <span style={{ fontSize: 9, color: '#10b981', fontWeight: 700 }}>● Live</span>}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 5,
+            background: 'rgba(99,102,241,0.1)', color: '#a5b4fc',
+            border: '1px solid rgba(99,102,241,0.2)',
+          }}>
+            {xStocksCount} xStocks
+          </span>
+          {poolCount > 0 && (
+            <span style={{ fontSize: 10.5, color: 'var(--text-3)' }}>
+              {poolCount} pools
+            </span>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {protocol.rewards.map(r => <span key={r} className="badge badge-purple" style={{ fontSize: 10.5 }}>{r}</span>)}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <a href={protocol.twitterUrl} target="_blank" rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            style={{ fontSize: 11.5, color: 'var(--text-3)', textDecoration: 'none' }}>𝕏</a>
-          <a href={protocol.docsUrl} target="_blank" rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            style={{ fontSize: 11.5, color: 'var(--text-3)', textDecoration: 'none' }}>Docs</a>
-          <span style={{ fontSize: 11.5, color: '#a5b4fc' }}>↗ Ouvrir</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {protocol.rewards?.map(r => (
+            <span key={r} style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 5,
+              background: 'rgba(139,92,246,0.1)', color: '#c4b5fd',
+              border: '1px solid rgba(139,92,246,0.2)',
+            }}>{r}</span>
+          ))}
+          <span style={{ fontSize: 11, color: '#a5b4fc', fontWeight: 600 }}>Open &#8599;</span>
         </div>
       </div>
     </a>
   )
 }
 
+// ── Main Component ──────────────────────────────────────────────────────────
+
 export default function DefiHub() {
-  const [selectedSymbol, setSelectedSymbol] = useState('xAAPL')
-  const [amount, setAmount] = useState(10000)
-  const [duration, setDuration] = useState(365)
-  const [strategy, setStrategy] = useState('supply')
-  const [leverage, setLeverage] = useState(2)
-  const [activeTab, setActiveTab] = useState('protocols')
+  const [activeTab, setActiveTab] = useState('overview')
+  const [yieldSort, setYieldSort] = useState({ key: 'apy', dir: 'desc' })
+  const [yieldFilter, setYieldFilter] = useState('all')
 
-  // Live TVL from DeFiLlama (refreshes every 5 min)
-  const { tvlsFormatted } = useLiveTVLs()
+  // Live data hooks
+  const { tvls, tvlsFormatted, loading: tvlLoading } = useLiveTVLs()
+  const { pools, loading: yieldsLoading, error: yieldsError } = useLiveYields()
 
-  const liveStocks = XSTOCKS_LIST.filter(x => x.status === 'live')
-  const selectedStock = XSTOCKS_LIST.find(x => x.symbol === selectedSymbol)
+  // ── Computed: live APY ranges per protocol ──
+  const protocolApyRanges = useMemo(() => {
+    if (!pools.length) return {}
+    const ranges = {}
+    for (const pool of pools) {
+      const protoEntry = DEFI_PROTOCOLS.find(p => p.defillamaSlug === pool.project)
+      if (!protoEntry) continue
+      const totalApy = pool.apy ?? 0
+      if (!ranges[protoEntry.id]) {
+        ranges[protoEntry.id] = { min: totalApy, max: totalApy, count: 1 }
+      } else {
+        ranges[protoEntry.id].min = Math.min(ranges[protoEntry.id].min, totalApy)
+        ranges[protoEntry.id].max = Math.max(ranges[protoEntry.id].max, totalApy)
+        ranges[protoEntry.id].count++
+      }
+    }
+    return ranges
+  }, [pools])
 
-  const calcResults = useMemo(() => {
-    return DEFI_PROTOCOLS
-      .filter(p => p.xstocksSupported.includes(selectedSymbol))
-      .map(p => {
-        let netApy = 0
-        const isPointsOnly = p.supplyApy.max === 0
+  // ── Computed: stats ──
+  const totalLiveTVL = useMemo(() => {
+    const sum = Object.values(tvls).reduce((s, v) => s + (v || 0), 0)
+    return sum > 0 ? sum : null
+  }, [tvls])
 
-        if (isPointsOnly) {
-          netApy = 0 // Points-only protocol — no APY
-        } else if (strategy === 'leveraged') {
-          if (p.borrowApr.max > 0) {
-            // Only lending protocols support looping
-            netApy = calcLendingNetApy(p, amount, leverage)
-          } else {
-            // LP/Vault: no borrow loop available — use base supply
-            netApy = p.supplyApy.min + p.rewardApy * 0.5
-          }
-        } else if (strategy === 'lp') {
-          if (p.type === PROTOCOL_TYPES.LP) {
-            // LP protocol: full fee range + rewards (this IS what LPs earn)
-            netApy = (p.supplyApy.min + p.supplyApy.max) / 2 + p.rewardApy
-          } else if (p.type === PROTOCOL_TYPES.PERP) {
-            // Perp protocols: JLP-style vault exposure to LP fees
-            netApy = p.supplyApy.max * 0.6 + p.rewardApy
-          } else {
-            // Lending protocols: LP not directly applicable — minimal return
-            netApy = p.supplyApy.min
-          }
-        } else if (strategy === 'perp') {
-          if (p.type === PROTOCOL_TYPES.PERP) {
-            // Perp protocol: full yield via funding rates + vault APY
-            netApy = p.supplyApy.max + p.rewardApy
-          } else if (p.type === PROTOCOL_TYPES.LP) {
-            // LP as liquidity for perp vault (partial)
-            netApy = p.supplyApy.min + p.rewardApy * 0.7
-          } else {
-            // Lending: collateral for perp, basic interest
-            netApy = p.supplyApy.min + p.rewardApy * 0.4
-          }
-        } else {
-          // supply (default): standard deposit + rewards
-          netApy = p.supplyApy.max + p.rewardApy
-        }
+  const avgApy = useMemo(() => {
+    if (!pools.length) return 0
+    const apys = pools.filter(p => p.apy > 0).map(p => p.apy)
+    return apys.length ? apys.reduce((s, v) => s + v, 0) / apys.length : 0
+  }, [pools])
 
-        const annualGains = amount * Math.max(netApy, 0) / 100
-        // Compound interest for duration > 365 days
-        const years = duration / 365
-        const gainsDuration = strategy === 'supply' || strategy === 'leveraged'
-          ? amount * (Math.pow(1 + Math.max(netApy, 0) / 100, years) - 1)
-          : annualGains / 365 * duration // simple for LP/perp
+  const activeAirdrops = SOLANA_PROTOCOLS.filter(p => p.airdrop?.active).length
 
-        return { protocol: p, netApy: Math.max(netApy, 0), gains365: annualGains, gainsDuration, isPointsOnly }
-      })
-      .sort((a, b) => b.netApy - a.netApy)
-  }, [selectedSymbol, strategy, leverage, amount, duration])
+  // ── Yield Explorer: sorted + filtered pools ──
+  const filteredPools = useMemo(() => {
+    let list = [...pools]
+    if (yieldFilter !== 'all') {
+      list = list.filter(p => p.project === yieldFilter)
+    }
+    list.sort((a, b) => {
+      const valA = a[yieldSort.key] ?? 0
+      const valB = b[yieldSort.key] ?? 0
+      return yieldSort.dir === 'asc' ? valA - valB : valB - valA
+    })
+    return list
+  }, [pools, yieldSort, yieldFilter])
 
-  const chartData = calcResults.filter(r => !r.isPointsOnly).map(r => ({
-    name: r.protocol.name.split(' ')[0],
-    apy: parseFloat(r.netApy.toFixed(2)),
-    gains: parseFloat(r.gainsDuration.toFixed(0)),
-    fill: r.protocol.color,
-  }))
+  const uniqueProjects = useMemo(() => {
+    const set = new Set(pools.map(p => p.project))
+    return [...set].sort()
+  }, [pools])
 
-  const best = calcResults.find(r => !r.isPointsOnly)
+  function toggleSort(key) {
+    setYieldSort(prev => ({
+      key,
+      dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc',
+    }))
+  }
+
+  // ── Tab definitions ──
+  const TABS = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'yields', label: 'Yield Explorer' },
+    { id: 'xpoints', label: 'xPoints' },
+  ]
 
   return (
     <div className="page-wrapper">
-      {/* Header */}
-      <div className="page-header">
-        <h1 className="page-title">DeFi <span className="gradient-text">Hub</span></h1>
-        <p className="page-subtitle">Protocoles DeFi xStocks · Clique sur une carte pour accéder au site officiel</p>
+
+      {/* ── HEADER ────────────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 28 }}>
+        <h1 style={{
+          fontSize: 32, fontWeight: 900, letterSpacing: '-0.03em', marginBottom: 8,
+          background: 'linear-gradient(135deg, #00e4b5, #6366f1, #f472b6)',
+          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+        }}>
+          DeFi Hub
+        </h1>
+        <p style={{ fontSize: 13.5, color: 'var(--text-3)', lineHeight: 1.6 }}>
+          Live DeFi analytics for xStocks on Solana
+          <span style={{ margin: '0 8px', opacity: 0.3 }}>|</span>
+          <span style={{ color: '#00e4b5', fontWeight: 600 }}>
+            {totalLiveTVL ? formatTVL(totalLiveTVL) : `$${(TOTAL_TVL / 1000).toFixed(1)}B`} TVL
+          </span>
+          <span style={{ margin: '0 8px', opacity: 0.3 }}>|</span>
+          <span style={{ fontWeight: 600 }}>{DEFI_PROTOCOLS.length} protocols</span>
+          <span style={{ margin: '0 8px', opacity: 0.3 }}>|</span>
+          <span style={{ fontWeight: 600 }}>{pools.length} live pools</span>
+        </p>
       </div>
 
-      {/* TVL Overview */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
-        {[
-          { label: 'TVL Total (Solana)', value: `$${(TOTAL_TVL/1000).toFixed(1)}B`, color: '#14f195' },
-          { label: 'Protocoles Solana', value: DEFI_PROTOCOLS.length, color: '#00e4b5' },
-          { label: 'Airdrops Actifs', value: SOLANA_PROTOCOLS.filter(p=>p.airdrop?.active).length, color: '#f9a8d4' },
-          { label: 'xStocks Supportés', value: Math.max(...DEFI_PROTOCOLS.map(p=>p.xstocksSupported.length)), color: '#fbbf24', sub: 'max par protocole' },
-        ].map(s => (
-          <div key={s.label} className="stat-card">
-            <div className="stat-label">{s.label}</div>
-            <div className="stat-value" style={{ color: s.color, fontSize: 24, marginTop: 8 }}>{s.value}</div>
-            {s.sub && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4 }}>{s.sub}</div>}
-          </div>
-        ))}
-      </div>
-
-      {/* Tabs */}
-      <div className="tab-bar" style={{ marginBottom: 20, display: 'inline-flex' }}>
-        {[
-          { id: 'protocols', label: '🏦 Protocoles' },
-          { id: 'calculator', label: '⚡ Calculateur' },
-        ].map(t => (
-          <button key={t.id} className={`tab-btn ${activeTab === t.id ? 'active' : ''}`} onClick={() => setActiveTab(t.id)}>
+      {/* ── TABS ─────────────────────────────────────────────────────────── */}
+      <div style={{
+        display: 'inline-flex', gap: 2, marginBottom: 24,
+        background: 'var(--card)', borderRadius: 10, padding: 3,
+        border: '1px solid var(--border)',
+      }}>
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            style={{
+              padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em',
+              background: activeTab === t.id ? 'rgba(0,228,181,0.12)' : 'transparent',
+              color: activeTab === t.id ? '#00e4b5' : 'var(--text-3)',
+              transition: 'all 0.15s',
+            }}
+          >
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* ── Protocol Cards ─────────────────────────────────────────────── */}
-      {activeTab === 'protocols' && (
+      {/* ── OVERVIEW TAB ─────────────────────────────────────────────────── */}
+      {activeTab === 'overview' && (
         <div>
-          {/* xPoints multiplier context */}
-          <div className="xpoints-banner" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontSize: 24 }}>⭐</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: '#00e4b5', marginBottom: 4 }}>
-                  Gagnez des xPoints sur ces protocoles — Programme Officiel Kraken × Backed Finance
+          {/* Stat cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+            {[
+              {
+                label: 'Total TVL',
+                value: totalLiveTVL ? formatTVL(totalLiveTVL) : `$${(TOTAL_TVL / 1000).toFixed(1)}B`,
+                color: '#00e4b5',
+                sub: totalLiveTVL ? 'Live from DeFiLlama' : 'Hardcoded fallback',
+                live: !!totalLiveTVL,
+              },
+              {
+                label: 'Protocols Active',
+                value: DEFI_PROTOCOLS.length,
+                color: '#6366f1',
+                sub: 'Solana DeFi',
+              },
+              {
+                label: 'Avg APY',
+                value: avgApy > 0 ? `${avgApy.toFixed(1)}%` : '---',
+                color: '#4ade80',
+                sub: pools.length > 0 ? `Across ${pools.length} pools` : 'Loading...',
+                live: avgApy > 0,
+              },
+              {
+                label: 'Active Airdrops',
+                value: activeAirdrops,
+                color: '#f9a8d4',
+                sub: 'Ongoing programs',
+              },
+            ].map(s => (
+              <div key={s.label} style={{
+                background: 'var(--card)', borderRadius: 12, padding: '16px 18px',
+                border: '1px solid var(--border)',
+              }}>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                  {s.label}
                 </div>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  {[
-                    { label: 'LP Raydium/Orca', mult: '7×', color: '#14f195' },
-                    { label: 'Lend Kamino', mult: '5×', color: '#00c896' },
-                    { label: 'Hold xStocks', mult: '1×', color: '#8fa3bc' },
-                    { label: 'Connexion tôt', mult: '+20%', color: '#fbbf24' },
-                    { label: 'Referral', mult: '+20%', color: '#f9a8d4' },
-                  ].map(m => (
-                    <span key={m.label} style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                      <strong style={{ color: m.color }}>{m.mult}</strong> {m.label}
-                    </span>
-                  ))}
+                <div style={{ fontSize: 26, fontWeight: 900, color: s.color, letterSpacing: '-0.03em', marginBottom: 4 }}>
+                  {s.value}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {s.live && <span style={{ width: 6, height: 6, borderRadius: 3, background: '#10b981', display: 'inline-block' }} />}
+                  {s.sub}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Protocol cards grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
+            gap: 16,
+          }}>
+            {DEFI_PROTOCOLS.map(p => (
+              <ProtocolCard
+                key={p.id}
+                protocol={p}
+                liveTvl={p.defillamaSlug ? tvlsFormatted[p.id] : null}
+                liveApyRange={protocolApyRanges[p.id] ? { min: protocolApyRanges[p.id].min, max: protocolApyRanges[p.id].max } : null}
+                poolCount={protocolApyRanges[p.id]?.count || 0}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── YIELD EXPLORER TAB ───────────────────────────────────────────── */}
+      {activeTab === 'yields' && (
+        <div>
+          {/* Filter bar */}
+          <div style={{
+            display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap',
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>Filter:</div>
+            <select
+              value={yieldFilter}
+              onChange={e => setYieldFilter(e.target.value)}
+              style={{
+                background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8,
+                padding: '7px 12px', color: 'var(--text)', fontSize: 12.5, cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              <option value="all">All Protocols ({pools.length})</option>
+              {uniqueProjects.map(proj => (
+                <option key={proj} value={proj}>{proj}</option>
+              ))}
+            </select>
+            <div style={{ flex: 1 }} />
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+              {filteredPools.length} pools
+              {yieldsLoading && <span style={{ marginLeft: 8, color: '#00e4b5' }}>Loading...</span>}
+            </div>
+          </div>
+
+          {yieldsLoading ? (
+            <LoadingPulse rows={10} />
+          ) : yieldsError ? (
+            <div style={{
+              padding: '24px', textAlign: 'center', borderRadius: 12,
+              background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+              color: '#f87171', fontSize: 13,
+            }}>
+              Failed to load yields: {yieldsError}
+            </div>
+          ) : (
+            <div style={{
+              background: 'var(--card)', borderRadius: 14,
+              border: '1px solid var(--border)', overflow: 'hidden',
+            }}>
+              {/* Table header */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '160px 1fr 90px 110px 90px 90px 90px 80px',
+                gap: 0,
+                padding: '12px 16px',
+                background: 'rgba(0,0,0,0.2)',
+                borderBottom: '1px solid var(--border)',
+                fontSize: 10.5, fontWeight: 700, color: 'var(--text-3)',
+                textTransform: 'uppercase', letterSpacing: '0.06em',
+              }}>
+                <div>Protocol</div>
+                <div>Pool</div>
+                <div>Chain</div>
+                <div style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('tvlUsd')}>
+                  TVL <SortIcon active={yieldSort.key === 'tvlUsd'} dir={yieldSort.dir} />
+                </div>
+                <div style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('apyBase')}>
+                  APY Base <SortIcon active={yieldSort.key === 'apyBase'} dir={yieldSort.dir} />
+                </div>
+                <div style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('apyReward')}>
+                  APY Reward <SortIcon active={yieldSort.key === 'apyReward'} dir={yieldSort.dir} />
+                </div>
+                <div style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('apy')}>
+                  Total APY <SortIcon active={yieldSort.key === 'apy'} dir={yieldSort.dir} />
+                </div>
+                <div>IL Risk</div>
+              </div>
+
+              {/* Table rows */}
+              <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+                {filteredPools.slice(0, 100).map((pool, i) => {
+                  const totalApy = pool.apy ?? 0
+                  const isTopYield = totalApy >= 20
+                  return (
+                    <div
+                      key={pool.pool}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '160px 1fr 90px 110px 90px 90px 90px 80px',
+                        gap: 0,
+                        padding: '10px 16px',
+                        borderBottom: '1px solid var(--border)',
+                        fontSize: 12.5,
+                        background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.08)',
+                        transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,228,181,0.04)'}
+                      onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.08)'}
+                    >
+                      <div style={{ fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {pool.project}
+                      </div>
+                      <div style={{ color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {pool.symbol || '---'}
+                      </div>
+                      <div style={{ color: 'var(--text-3)' }}>{pool.chain}</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text)' }}>
+                        {pool.tvlUsd ? formatTVL(pool.tvlUsd) : '---'}
+                      </div>
+                      <div style={{ color: (pool.apyBase ?? 0) > 0 ? '#4ade80' : 'var(--text-3)' }}>
+                        {pool.apyBase != null ? `${pool.apyBase.toFixed(2)}%` : '---'}
+                      </div>
+                      <div style={{ color: (pool.apyReward ?? 0) > 0 ? '#a5b4fc' : 'var(--text-3)' }}>
+                        {pool.apyReward != null ? `${pool.apyReward.toFixed(2)}%` : '---'}
+                      </div>
+                      <div style={{
+                        fontWeight: 800,
+                        color: isTopYield ? '#00e4b5' : totalApy > 0 ? '#4ade80' : 'var(--text-3)',
+                      }}>
+                        {totalApy > 0 ? `${totalApy.toFixed(2)}%` : '---'}
+                        {isTopYield && <span style={{ fontSize: 9, marginLeft: 3 }}>&#9733;</span>}
+                      </div>
+                      <div>
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 5,
+                          background: pool.ilRisk === 'yes'
+                            ? 'rgba(239,68,68,0.1)' : pool.ilRisk === 'no'
+                            ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                          color: pool.ilRisk === 'yes'
+                            ? '#f87171' : pool.ilRisk === 'no'
+                            ? '#10b981' : '#f59e0b',
+                          border: `1px solid ${pool.ilRisk === 'yes'
+                            ? 'rgba(239,68,68,0.2)' : pool.ilRisk === 'no'
+                            ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
+                        }}>
+                          {pool.ilRisk === 'yes' ? 'Yes' : pool.ilRisk === 'no' ? 'No' : 'Varies'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {filteredPools.length > 100 && (
+                <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-3)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+                  Showing top 100 of {filteredPools.length} pools
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── XPOINTS TAB ──────────────────────────────────────────────────── */}
+      {activeTab === 'xpoints' && (
+        <div>
+          {/* Hero card */}
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(0,228,181,0.06), rgba(99,102,241,0.06))',
+            border: '1px solid rgba(0,228,181,0.2)', borderRadius: 14,
+            padding: '28px 32px', marginBottom: 24,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <span style={{ fontSize: 32 }}>&#11088;</span>
+              <div>
+                <h2 style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-0.02em', margin: 0, color: '#00e4b5' }}>
+                  xPoints Program
+                </h2>
+                <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 4 }}>
+                  Official rewards program by Kraken x Backed Finance -- Season 1
                 </div>
               </div>
             </div>
+            <p style={{ fontSize: 13.5, color: 'var(--text-2)', lineHeight: 1.8, marginBottom: 20, maxWidth: 700 }}>
+              Earn xPoints for every DeFi action with xStocks on Solana. LP, lend, hold -- every activity counts.
+              Connect your wallet early for a permanent +20% bonus. Season 1 launched March 10, 2026.
+            </p>
             <a
               href="https://defi.xstocks.fi/points?ref=GAZETTEBALE"
               target="_blank"
               rel="noopener noreferrer"
               style={{
-                padding: '8px 18px', borderRadius: 8, textDecoration: 'none',
+                display: 'inline-block', padding: '10px 24px', borderRadius: 10,
                 background: 'linear-gradient(135deg, #00c896, #00a8d4)',
-                color: '#05090f', fontSize: 12.5, fontWeight: 800, flexShrink: 0,
+                color: '#05090f', fontSize: 14, fontWeight: 800, textDecoration: 'none',
+                transition: 'transform 0.15s, box-shadow 0.15s',
               }}
-            >⭐ Rejoindre xPoints</a>
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,228,181,0.3)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none' }}
+            >
+              Join xPoints &#8599;
+            </a>
           </div>
 
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>
-            Protocoles DeFi Solana intégrant les xStocks · Clique sur une carte pour accéder au site officiel · Hyperliquid (autre blockchain) non inclus
+          {/* Multipliers grid */}
+          <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 16, letterSpacing: '-0.01em' }}>
+            Point Multipliers
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 28 }}>
+            {[
+              { activity: 'LP on Raydium / Orca', mult: '7x', color: '#14f195', icon: '&#127754;', desc: 'Provide liquidity in xStock pools' },
+              { activity: 'Lend on Kamino', mult: '5x', color: '#06b6d4', icon: '&#127974;', desc: 'Deposit xStocks as collateral' },
+              { activity: 'Hold xStocks', mult: '1x', color: '#8fa3bc', icon: '&#128176;', desc: 'Simply hold in your wallet' },
+              { activity: 'Early Connector', mult: '+20%', color: '#fbbf24', icon: '&#9889;', desc: 'Permanent bonus for early wallets' },
+              { activity: 'Referral', mult: '+20%', color: '#f9a8d4', icon: '&#128101;', desc: 'Earn 20% of your referrals\' points' },
+            ].map(m => (
+              <div key={m.activity} style={{
+                background: 'var(--card)', borderRadius: 12, padding: '18px 16px',
+                border: `1px solid ${m.color}25`,
+                display: 'flex', flexDirection: 'column', gap: 8,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 22 }} dangerouslySetInnerHTML={{ __html: m.icon }} />
+                  <span style={{
+                    fontSize: 20, fontWeight: 900, color: m.color, letterSpacing: '-0.02em',
+                  }}>{m.mult}</span>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{m.activity}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>{m.desc}</div>
+              </div>
+            ))}
           </div>
 
-          {CATEGORY_GROUPS.map(group => {
-            const grouped = DEFI_PROTOCOLS.filter(p => p.category === group.key)
-            if (!grouped.length) return null
-            return (
-              <div key={group.key} style={{ marginBottom: 32 }}>
-                {/* Section Header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.01em' }}>
-                      {group.label}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{group.desc}</div>
-                  </div>
-                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
-                  {grouped.map(p => (
-                    <ProtocolCard
-                      key={p.id}
-                      protocol={p}
-                      liveTvl={p.defillamaSlug ? tvlsFormatted[p.id] : null}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* ── Calculator ─────────────────────────────────────────────────── */}
-      {activeTab === 'calculator' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, alignItems: 'start' }}>
-          {/* Config */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="card">
-              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 16 }}>Configuration</div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-3)', marginBottom: 6, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Asset</label>
-                <select className="select" value={selectedSymbol} onChange={e => setSelectedSymbol(e.target.value)}>
-                  {liveStocks.map(s => <option key={s.symbol} value={s.symbol}>{s.logo} {s.symbol} — {s.name}</option>)}
-                </select>
-                {selectedStock && (
-                  <div style={{ marginTop: 6, fontSize: 12, padding: '7px 10px', background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
-                    <span style={{ color: 'var(--text-2)' }}>Prix: </span>
-                    <strong>${selectedStock.price >= 1000 ? selectedStock.price.toLocaleString() : selectedStock.price.toFixed(2)}</strong>
-                    <span className={selectedStock.change24h >= 0 ? ' positive' : ' negative'} style={{ marginLeft: 8, fontWeight: 600 }}>
-                      {selectedStock.change24h >= 0 ? '+' : ''}{selectedStock.change24h}%
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-3)', marginBottom: 6, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Montant (USD)</label>
-                <input className="input" type="number" value={amount} onChange={e => setAmount(Number(e.target.value))} min={0} step={100} />
-                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  {[1000, 5000, 10000, 50000].map(v => (
-                    <button key={v} className="btn-ghost" style={{ padding: '4px 8px', fontSize: 11.5 }} onClick={() => setAmount(v)}>
-                      ${v >= 1000 ? `${v/1000}K` : v}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-3)', marginBottom: 6, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Durée: {duration >= 365 ? `${(duration/365).toFixed(duration % 365 === 0 ? 0 : 1)} an(s)` : `${duration}j`}
-                </label>
-                <input type="range" min={7} max={3650} value={duration} onChange={e => setDuration(Number(e.target.value))} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-3)', marginTop: 4 }}>
-                  {['7j','1an','2ans','3ans','5ans','10ans'].map(l => <span key={l}>{l}</span>)}
-                </div>
-                <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
-                  {[{l:'30j',v:30},{l:'1A',v:365},{l:'2A',v:730},{l:'3A',v:1095},{l:'5A',v:1825},{l:'10A',v:3650}].map(x => (
-                    <button key={x.v} className="btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => setDuration(x.v)}>
-                      {x.l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', fontSize: 11, color: 'var(--text-3)', marginBottom: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Stratégie</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {STRATEGIES.map(s => (
-                    <button key={s.id} onClick={() => setStrategy(s.id)} style={{
-                      display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
-                      borderRadius: 8, border: `1px solid ${strategy === s.id ? 'var(--accent)' : 'var(--border)'}`,
-                      background: strategy === s.id ? 'rgba(99,102,241,0.1)' : 'var(--bg)',
-                      cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
-                    }}>
-                      <span style={{ fontSize: 17 }}>{s.icon}</span>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: strategy === s.id ? '#a5b4fc' : 'var(--text)' }}>{s.label}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.desc}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {strategy === 'leveraged' && (
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, color: 'var(--text-3)', marginBottom: 6, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    Levier: {leverage}×
-                  </label>
-                  <input type="range" min={1.1} max={5} step={0.1} value={leverage} onChange={e => setLeverage(Number(e.target.value))} />
-                  <div style={{ padding: '8px 10px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 7, fontSize: 12, color: '#fbbf24', marginTop: 8 }}>
-                    ⚠️ Levier amplifie gains ET pertes. Risque de liquidation.
+          {/* How it works */}
+          <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 16, letterSpacing: '-0.01em' }}>
+            How It Works
+          </h3>
+          <div style={{
+            background: 'var(--card)', borderRadius: 14, border: '1px solid var(--border)',
+            padding: '24px 28px',
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {[
+                { step: 1, title: 'Connect your wallet', desc: 'Visit defi.xstocks.fi/points and connect your Solana wallet. Get the permanent +20% early bonus.' },
+                { step: 2, title: 'Get xStocks', desc: 'Buy tokenized US equities on Jupiter, Raydium, or directly from xstocks.fi.' },
+                { step: 3, title: 'Deploy in DeFi', desc: 'Provide LP on Raydium/Orca (7x) or lend on Kamino (5x) for maximum points.' },
+                { step: 4, title: 'Share your referral', desc: 'Your referral earns +20% for them and you get 20% of all their points.' },
+                { step: 5, title: 'Climb the leaderboard', desc: 'xBoost multiplier increases with consistency. Stay active for best rewards.' },
+              ].map(s => (
+                <div key={s.step} style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    background: 'rgba(0,228,181,0.12)', border: '1px solid rgba(0,228,181,0.25)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 14, fontWeight: 900, color: '#00e4b5', flexShrink: 0,
+                  }}>{s.step}</div>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)', marginBottom: 3 }}>{s.title}</div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.6 }}>{s.desc}</div>
                   </div>
                 </div>
-              )}
+              ))}
             </div>
-
-            {/* Best Result */}
-            {best && (
-              <div className="card-glow" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.08), rgba(99,102,241,0.06))', borderColor: 'rgba(34,197,94,0.3)' }}>
-                <div style={{ fontSize: 11, color: '#4ade80', fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>🏆 Meilleure Option</div>
-                <div style={{ fontWeight: 700, fontSize: 16 }}>{best.protocol.name}</div>
-                <div style={{ fontSize: 30, fontWeight: 900, color: '#4ade80', margin: '8px 0', letterSpacing: '-0.04em' }}>
-                  {best.netApy.toFixed(2)}%
-                  <span style={{ fontSize: 14, color: 'var(--text-2)', fontWeight: 500 }}> APY</span>
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.8 }}>
-                  Sur {duration >= 365 ? `${(duration/365).toFixed(1)} an(s)` : `${duration}j`}: <strong style={{ color: '#4ade80' }}>+${best.gainsDuration.toLocaleString('en',{maximumFractionDigits:0})}</strong><br />
-                  Sur 1 an: <strong style={{ color: '#4ade80' }}>+${best.gains365.toLocaleString('en',{maximumFractionDigits:0})}</strong>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Results */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div className="card">
-              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
-                Comparaison — {selectedSymbol}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>
-                {STRATEGIES.find(s => s.id === strategy)?.label} · ${amount.toLocaleString()} · {duration >= 365 ? `${(duration/365).toFixed(1)}A` : `${duration}j`}
-              </div>
-
-              {/* APY Bars */}
-              <div style={{ marginBottom: 24 }}>
-                {calcResults.map((r, i) => (
-                  <div key={r.protocol.id} style={{ marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <a href={r.protocol.url} target="_blank" rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 16 }}>{r.protocol.logo}</span>
-                          <span style={{ fontWeight: 600, color: 'var(--text)', fontSize: 13.5 }}>{r.protocol.name}</span>
-                          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>↗</span>
-                        </a>
-                        <span className={`badge ${RISK_LABELS[r.protocol.risk].class}`} style={{ fontSize: 10 }}>
-                          {RISK_LABELS[r.protocol.risk].label}
-                        </span>
-                        {r.protocol.earlyStage && <span className="badge badge-orange" style={{ fontSize: 9.5 }}>Early Stage</span>}
-                        {r.protocol.airdrop?.active && <span className="badge badge-pink" style={{ fontSize: 9.5 }}>🪂 Points</span>}
-                      </div>
-                      <span style={{ fontWeight: 800, color: r.isPointsOnly ? '#f9a8d4' : '#4ade80', fontSize: 15 }}>
-                        {r.isPointsOnly ? '🪂 Points' : `${r.netApy.toFixed(2)}%`}
-                      </span>
-                    </div>
-                    <div className="progress-bar">
-                      <div className="progress-fill" style={{
-                        width: r.isPointsOnly ? '15%' : `${Math.max((r.netApy / Math.max(...calcResults.filter(x=>!x.isPointsOnly).map(x=>x.netApy), 1)) * 100, 5)}%`,
-                        background: r.isPointsOnly
-                          ? 'linear-gradient(90deg, #ec4899, #a855f7)'
-                          : i === 0 ? 'linear-gradient(90deg, #22c55e, #10b981)' : 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                      }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Bar Chart */}
-              {chartData.length > 0 && (
-                <>
-                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12 }}>Gains estimés sur {duration >= 365 ? `${(duration/365).toFixed(1)} an(s)` : `${duration}j`} ($)</div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={chartData} margin={{ left: 0, right: 0 }}>
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#4a5568' }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: '#4a5568' }} axisLine={false} tickLine={false} tickFormatter={v => `$${v >= 1000 ? (v/1000).toFixed(0)+'K' : v}`} width={50} />
-                      <Tooltip contentStyle={{ background: '#0d1421', border: '1px solid #1a2840', borderRadius: 8, fontSize: 12 }}
-                        formatter={v => [`$${v.toLocaleString()}`, 'Gains estimés']} />
-                      <Bar dataKey="gains" radius={[4,4,0,0]} fill="#6366f1" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </>
-              )}
-            </div>
-
-            <div className="card" style={{ background: 'rgba(99,102,241,0.04)', borderColor: 'rgba(99,102,241,0.15)' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#a5b4fc', marginBottom: 8 }}>💡 Comment lire ces résultats</div>
-              <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
-                L'APY inclut le taux de base + rewards tokens. Les pools LP exposent à l'<strong>impermanent loss</strong>.
-                PiggyBank distribue des <strong>Oink Points</strong> sans APY classique — le gain dépend du TGE futur du token PIGGY.
-                Les taux varient en temps réel selon l'utilisation des protocoles.
-              </div>
-            </div>
+          {/* Important notes */}
+          <div style={{
+            marginTop: 20, padding: '16px 20px', borderRadius: 12,
+            background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)',
+            fontSize: 12.5, color: '#fbbf24', lineHeight: 1.7,
+          }}>
+            <strong>Note:</strong> No token has been officially confirmed. Points accumulate onchain. Season duration has not been announced.
+            The xPoints program rewards early and active DeFi participants on Solana.
           </div>
         </div>
       )}

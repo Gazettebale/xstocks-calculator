@@ -184,12 +184,26 @@ export async function fetchXStockLivePrices(xStocksSymbols) {
 
 // Map: protocolId → DeFiLlama slug
 const DEFILLAMA_SLUGS = {
-  kamino:    'kamino-lend',
-  orca:      'orca',
-  raydium:   'raydium',
-  jupiter:   'jupiter',
-  titan:     'titan-exchange',
-  piggybank: 'piggybank-finance',
+  kamino:      'kamino-lend',
+  orca:        'orca',
+  raydium:     'raydium',
+  jupiter:     'jupiter',
+  drift:       'drift',
+  marginfi:    'marginfi',
+  titan:       'titan-exchange',
+  piggybank:   'piggybank-finance',
+  hyperliquid: 'hyperliquid',
+}
+
+// Map: protocolId → DeFiLlama yields project name (for matching pools)
+export const DEFILLAMA_YIELD_PROJECTS = {
+  kamino:      'kamino-lend',
+  orca:        'orca',
+  raydium:     'raydium',
+  jupiter:     'jupiter-perps',
+  drift:       'drift',
+  marginfi:    'marginfi',
+  hyperliquid: 'hyperliquid',
 }
 
 /**
@@ -224,4 +238,80 @@ export function formatTVL(tvl) {
   if (tvl >= 1e9) return `$${(tvl / 1e9).toFixed(2)}B`
   if (tvl >= 1e6) return `$${(tvl / 1e6).toFixed(0)}M`
   return `$${tvl.toLocaleString()}`
+}
+
+// ── DeFiLlama Yields API ─────────────────────────────────────────────────────
+
+const YIELDS_CACHE_KEY = 'defillama_yields_v1'
+const YIELDS_CACHE_TTL = 10 * 60 * 1000 // 10 minutes
+
+/**
+ * Fetch all yield pools from DeFiLlama, filtered to Solana + our protocols
+ * Returns: array of pool objects { pool, chain, project, symbol, tvlUsd, apy, apyBase, apyReward, ... }
+ */
+export async function fetchDeFiLlamaYields() {
+  // Check cache
+  try {
+    const raw = localStorage.getItem(YIELDS_CACHE_KEY)
+    if (raw) {
+      const { data, time } = JSON.parse(raw)
+      if (Date.now() - time < YIELDS_CACHE_TTL) return data
+    }
+  } catch {}
+
+  const res = await fetch(`${DEFILLAMA_YIELDS_URL}/pools`)
+  if (!res.ok) throw new Error(`DeFiLlama yields ${res.status}`)
+  const json = await res.json()
+
+  const projectNames = new Set(Object.values(DEFILLAMA_YIELD_PROJECTS))
+
+  // Filter: Solana chain + our known projects, OR Hyperliquid L1
+  const filtered = (json.data || []).filter(pool => {
+    if (!projectNames.has(pool.project)) return false
+    if (pool.project === 'hyperliquid') return true // HyperLiquid is on its own L1
+    return pool.chain === 'Solana'
+  })
+
+  // Cache results
+  try {
+    localStorage.setItem(YIELDS_CACHE_KEY, JSON.stringify({ data: filtered, time: Date.now() }))
+  } catch {}
+
+  return filtered
+}
+
+/**
+ * Fetch TVL history for a protocol (for sparklines)
+ * Returns: array of { date, totalLiquidityUSD }
+ */
+export async function fetchProtocolTVLHistory(protocolId) {
+  const slug = DEFILLAMA_SLUGS[protocolId]
+  if (!slug) return []
+
+  const cacheKey = `tvl_history_${slug}`
+  try {
+    const raw = localStorage.getItem(cacheKey)
+    if (raw) {
+      const { data, time } = JSON.parse(raw)
+      if (Date.now() - time < 15 * 60 * 1000) return data
+    }
+  } catch {}
+
+  try {
+    const res = await fetch(`${DEFILLAMA_TVL_URL}/protocol/${slug}`)
+    if (!res.ok) return []
+    const json = await res.json()
+    const history = (json.tvl || []).slice(-90).map(p => ({
+      date: new Date(p.date * 1000).toISOString().split('T')[0],
+      tvl: p.totalLiquidityUSD,
+    }))
+
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ data: history, time: Date.now() }))
+    } catch {}
+
+    return history
+  } catch {
+    return []
+  }
 }

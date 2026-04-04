@@ -2,6 +2,8 @@ import { useState, useMemo } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { XSTOCKS_LIST } from '../data/xstocks'
 import { PROTOCOLS, PROTOCOL_TYPES, RISK_LABELS, calcLendingNetApy } from '../data/protocols'
+import { useLiveYields } from '../hooks/useLiveData'
+import { DEFILLAMA_YIELD_PROJECTS } from '../services/liveData'
 
 const STRATEGY_TYPES = [
   { id: 'simple_supply', label: 'Supply Simple', icon: '💰', desc: 'Déposer et percevoir des intérêts' },
@@ -99,6 +101,26 @@ export default function DefiCalculator() {
   const [leverage, setLeverage] = useState(2)
   const [activeTab, setActiveTab] = useState('visual')
 
+  // Live APY data from DeFiLlama
+  const { pools: livePools, loading: yieldsLoading } = useLiveYields()
+
+  // Build a map: protocolId → { avgApy, maxApy } from live pools
+  const liveApyMap = useMemo(() => {
+    const map = {}
+    for (const [protId, projectName] of Object.entries(DEFILLAMA_YIELD_PROJECTS)) {
+      const matching = livePools.filter(p => p.project === projectName)
+      if (matching.length > 0) {
+        const apys = matching.map(p => p.apy || 0).filter(a => a > 0)
+        map[protId] = {
+          avgApy: apys.length > 0 ? apys.reduce((s, a) => s + a, 0) / apys.length : 0,
+          maxApy: apys.length > 0 ? Math.max(...apys) : 0,
+          poolCount: matching.length,
+        }
+      }
+    }
+    return map
+  }, [livePools])
+
   const liveStocks = XSTOCKS_LIST.filter(x => x.status === 'live')
   const selectedStock = XSTOCKS_LIST.find(x => x.symbol === selectedSymbol)
 
@@ -107,21 +129,26 @@ export default function DefiCalculator() {
       .filter(p => p.xstocksSupported.includes(selectedSymbol))
       .map(p => {
         let netApy = 0
+        const liveData = liveApyMap[p.id]
+
         if (strategy === 'simple_supply') {
-          netApy = calcLendingNetApy(p, amount, 1)
+          // Use live avg APY if available, otherwise fallback
+          netApy = liveData ? liveData.avgApy + p.rewardApy : calcLendingNetApy(p, amount, 1)
         } else if (strategy === 'leveraged' && p.borrowApr.max > 0) {
-          netApy = calcLendingNetApy(p, amount, leverage)
+          const baseApy = liveData ? liveData.avgApy : (p.supplyApy.min + p.supplyApy.max) / 2
+          const borrowCost = p.borrowApr.min + (p.borrowApr.max - p.borrowApr.min) * 0.4
+          netApy = (baseApy + p.rewardApy) * leverage - borrowCost * (leverage - 1)
         } else if (strategy === 'lp' && p.type === PROTOCOL_TYPES.LP) {
-          netApy = (p.supplyApy.min + p.supplyApy.max) / 2 + p.rewardApy
+          netApy = liveData ? liveData.avgApy + p.rewardApy : (p.supplyApy.min + p.supplyApy.max) / 2 + p.rewardApy
         } else if (strategy === 'perp_funding') {
-          netApy = p.supplyApy.max + p.rewardApy
+          netApy = liveData ? liveData.maxApy + p.rewardApy : p.supplyApy.max + p.rewardApy
         } else {
-          netApy = calcLendingNetApy(p, amount, 1)
+          netApy = liveData ? liveData.avgApy + p.rewardApy : calcLendingNetApy(p, amount, 1)
         }
-        return { protocol: p, netApy: Math.max(netApy, 0) }
+        return { protocol: p, netApy: Math.max(netApy, 0), isLive: !!liveData }
       })
       .sort((a, b) => b.netApy - a.netApy)
-  }, [selectedSymbol, strategy, leverage])
+  }, [selectedSymbol, strategy, leverage, liveApyMap])
 
   const maxApy = Math.max(...results.map(r => r.netApy), 0.01)
   const bestResult = results[0]

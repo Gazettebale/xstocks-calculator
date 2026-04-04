@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchXStockLivePrices, fetchLiveTVLs, isMarketOpen, formatTVL } from '../services/liveData'
+import { fetchXStockLivePrices, fetchLiveTVLs, fetchDeFiLlamaYields, fetchProtocolTVLHistory, isMarketOpen, formatTVL } from '../services/liveData'
 
 const PRICE_REFRESH_MS = 30_000        // 30 s — Pyth rate limit safe
 const TVL_REFRESH_MS   = 5 * 60_000   // 5 min — DeFiLlama polite polling
@@ -86,4 +86,61 @@ export function useLiveTVLs() {
   )
 
   return { tvls, tvlsFormatted, loading }
+}
+
+// ── useLiveYields ────────────────────────────────────────────────────────────
+/**
+ * Fetch live yield/APY data from DeFiLlama for Solana xStock protocols.
+ * Refreshes every 10 minutes.
+ *
+ * @returns {{ pools, loading, error }}
+ *   pools: array of { pool, chain, project, symbol, tvlUsd, apy, apyBase, apyReward, ... }
+ */
+export function useLiveYields() {
+  const [pools, setPools] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  const doFetch = useCallback(async () => {
+    try {
+      const data = await fetchDeFiLlamaYields()
+      setPools(data)
+      setError(null)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    doFetch()
+    const id = setInterval(doFetch, 10 * 60_000)
+    return () => clearInterval(id)
+  }, [doFetch])
+
+  return { pools, loading, error }
+}
+
+// ── useTVLHistory ────────────────────────────────────────────────────────────
+/**
+ * Fetch 90-day TVL history for a specific protocol.
+ *
+ * @param {string} protocolId  e.g. 'kamino'
+ * @returns {{ history, loading }}
+ *   history: [{ date, tvl }, ...]
+ */
+export function useTVLHistory(protocolId) {
+  const [history, setHistory] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!protocolId) { setLoading(false); return }
+    setLoading(true)
+    fetchProtocolTVLHistory(protocolId)
+      .then(data => setHistory(data))
+      .finally(() => setLoading(false))
+  }, [protocolId])
+
+  return { history, loading }
 }
