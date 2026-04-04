@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react'
-import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts'
-import { XSTOCKS_LIST, SECTORS, generateHistoricalData, LIVE_COUNT, COMING_SOON_COUNT } from '../data/xstocks'
+import { XSTOCKS_LIST, SECTORS, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, generateHistoricalData } from '../data/xstocks'
 import { getProtocolsForStock } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import { useLivePrices } from '../hooks/useLiveData'
+import TradingViewChart from '../components/TradingViewChart'
+import { AreaChart, Area, ResponsiveContainer } from 'recharts'
 
 // Symbols to fetch live prices for (only live xStocks)
 const LIVE_SYMBOLS = XSTOCKS_LIST.filter(x => x.status === 'live').map(x => x.symbol)
@@ -21,44 +22,26 @@ function Sparkline({ stock }) {
           </linearGradient>
         </defs>
         <Area type="monotone" dataKey="price" stroke={color} strokeWidth={1.5} fill={`url(#sp-${stock.symbol})`} dot={false} />
-        <Tooltip contentStyle={{ background: '#0d1421', border: '1px solid #1a2840', borderRadius: 6, fontSize: 11 }}
-          formatter={v => [`$${v.toFixed(2)}`]} labelFormatter={() => ''} />
       </AreaChart>
     </ResponsiveContainer>
   )
 }
 
-const MODAL_TIMEFRAMES = [
-  { label: '1M',  days: 30 },
-  { label: '3M',  days: 90 },
-  { label: '6M',  days: 180 },
-  { label: '1A',  days: 365 },
-  { label: '2A',  days: 730 },
-]
-
 function StockModal({ stock, liveData, onClose }) {
   const protocols = getProtocolsForStock(stock.symbol)
   const { watchlist, addToWatchlist, removeFromWatchlist } = usePortfolioStore()
   const inWatchlist = watchlist.includes(stock.symbol)
-  const [chartDays, setChartDays] = useState(180)
-  const histData = useMemo(() => generateHistoricalData(stock, chartDays), [stock.symbol, chartDays])
 
   // Merge live price if available
   const displayPrice = liveData?.price ?? stock.price
   const isLive = liveData?.isLive ?? false
 
   const isUp = stock.change24h >= 0
-  const color = isUp ? '#22c55e' : '#ef4444'
   const rangePos = Math.min(Math.max(((displayPrice - stock.low52w) / (stock.high52w - stock.low52w)) * 100, 2), 98)
-
-  // Price performance over period (use live price if available)
-  const firstPrice = histData[0]?.price ?? displayPrice
-  const perfPct = (((displayPrice - firstPrice) / firstPrice) * 100).toFixed(1)
-  const perfUp = parseFloat(perfPct) >= 0
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 660 }} onClick={e => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 860 }} onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -81,9 +64,6 @@ function StockModal({ stock, liveData, onClose }) {
           <span className={`badge ${isUp ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 13 }}>
             {isUp ? '+' : ''}{stock.change24h}% 24h
           </span>
-          <span className={`badge ${perfUp ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 11 }}>
-            {perfUp ? '+' : ''}{perfPct}% {MODAL_TIMEFRAMES.find(t => t.days === chartDays)?.label || ''}
-          </span>
           <span className={`badge ${stock.status === 'live' ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: 11 }}>
             {stock.status === 'live' ? '● Live' : '◌ Bientôt'}
           </span>
@@ -92,38 +72,17 @@ function StockModal({ stock, liveData, onClose }) {
               {isLive ? '⚡ Pyth Live' : '◌ Indicatif'}
             </span>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-            {MODAL_TIMEFRAMES.map(tf => (
-              <button key={tf.label} onClick={() => setChartDays(tf.days)} style={{
-                padding: '3px 9px', borderRadius: 5, cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
-                border: `1px solid ${chartDays === tf.days ? 'rgba(0,200,150,0.5)' : 'var(--border)'}`,
-                background: chartDays === tf.days ? 'rgba(0,200,150,0.12)' : 'transparent',
-                color: chartDays === tf.days ? '#00c896' : 'var(--text-3)',
-              }}>{tf.label}</button>
-            ))}
-          </div>
         </div>
 
-        {/* Chart with timeframe */}
+        {/* TradingView Chart — Full interactive with indicators, drawing tools */}
         <div style={{ marginBottom: 18 }}>
-          <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={histData} margin={{ left: 0, right: 0 }}>
-              <defs>
-                <linearGradient id={`modalG-${stock.symbol}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={color} stopOpacity={0.25} />
-                  <stop offset="100%" stopColor={color} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#4a5568' }} tickLine={false} axisLine={false}
-                tickFormatter={v => v.slice(5)} interval={Math.max(1, Math.floor(histData.length / 6))} />
-              <YAxis tick={{ fontSize: 9, fill: '#4a5568' }} tickLine={false} axisLine={false}
-                tickFormatter={v => `$${v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(0)}`} width={46}
-                domain={[d => Math.floor(d * 0.92), d => Math.ceil(d * 1.06)]} />
-              <Tooltip contentStyle={{ background: '#0d1421', border: '1px solid #1a2840', borderRadius: 8, fontSize: 11 }}
-                formatter={v => [`$${v.toFixed(2)}`, stock.symbol]} labelStyle={{ color: '#94a3b8' }} />
-              <Area type="monotone" dataKey="price" stroke={color} strokeWidth={2} fill={`url(#modalG-${stock.symbol})`} dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+          <TradingViewChart
+            symbol={getTvSymbol(stock)}
+            height={420}
+            interval="D"
+            showToolbar={true}
+            showDrawingTools={true}
+          />
         </div>
 
         {/* 52W Range */}

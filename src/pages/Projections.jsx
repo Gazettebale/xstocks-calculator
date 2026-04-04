@@ -128,7 +128,7 @@ export default function Projections() {
     )
   }, [scenarioData, stock.dividendYield])
 
-  // Build merged chart dataset
+  // Build merged chart dataset — seamless transition (no gap)
   const chartData = useMemo(() => {
     const step = Math.max(1, Math.floor(historicalData.length / 60))
     const hist = historicalData
@@ -154,20 +154,21 @@ export default function Projections() {
       return row
     })
 
-    // Bridge connector
-    const bridge = { date: lastPrice ? hist[hist.length - 1].date : '' }
-    bridge.hist = lastPrice
-    if (showFan) {
-      bridge.p50 = lastPrice
-      bridge.band_90 = [lastPrice, lastPrice]
-      bridge.band_50 = [lastPrice, lastPrice]
+    // Merge projection starting values into last historical point (seamless bridge)
+    const lastHist = hist[hist.length - 1]
+    if (lastHist) {
+      if (showFan) {
+        lastHist.p50 = lastPrice
+        lastHist.band_90 = [lastPrice, lastPrice]
+        lastHist.band_50 = [lastPrice, lastPrice]
+      }
+      SCENARIOS.forEach(s => {
+        if (activeScenarios.has(s.id)) lastHist[s.id] = lastPrice
+        if (showDividends && scenarioDataWithDiv && activeScenarios.has(s.id)) lastHist[s.id + '_total'] = lastPrice
+      })
     }
-    SCENARIOS.forEach(s => {
-      if (activeScenarios.has(s.id)) bridge[s.id] = lastPrice
-      if (showDividends && scenarioDataWithDiv && activeScenarios.has(s.id)) bridge[s.id + '_total'] = lastPrice
-    })
 
-    return [...hist, bridge, ...projRows]
+    return [...hist, ...projRows]
   }, [historicalData, fanData, scenarioData, scenarioDataWithDiv, showFan, showDividends, activeScenarios, timeframe])
 
   // Technical stats

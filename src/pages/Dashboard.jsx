@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
-import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, generateHistoricalData } from '../data/xstocks'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
+import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT } from '../data/xstocks'
 import { PROTOCOLS, SOLANA_PROTOCOLS, TOTAL_TVL } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import { useLivePrices } from '../hooks/useLiveData'
+import TradingViewChart from '../components/TradingViewChart'
 
 const SECTOR_COLORS = ['#00c896','#14f195','#f59e0b','#ec4899','#06b6d4','#a855f7','#f43f5e','#10b981']
 
@@ -15,22 +16,19 @@ const ETF_INFO = {
   xIWM:  { tracks: 'Russell 2000', desc: '2000 petites capitalisations US diversifiées', topHoldings: ['Diversifié','Small Caps','1800+ titres'] },
 }
 
-function MiniChart({ stock, width = 80, height = 36 }) {
-  const data = useMemo(() => generateHistoricalData(stock, 14), [stock.symbol])
-  const isUp = stock.change24h >= 0
-  const color = isUp ? '#22c55e' : '#ef4444'
+// Simple CSS trend bar for table cells (lightweight alternative to chart widgets)
+function MiniTrend({ isUp }) {
   return (
-    <ResponsiveContainer width={width} height={height}>
-      <AreaChart data={data}>
-        <defs>
-          <linearGradient id={`m${stock.symbol}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.25} />
-            <stop offset="100%" stopColor={color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <Area type="monotone" dataKey="price" stroke={color} strokeWidth={1.5} fill={`url(#m${stock.symbol})`} dot={false} />
-      </AreaChart>
-    </ResponsiveContainer>
+    <div style={{
+      width: 60, height: 24, display: 'flex', alignItems: 'flex-end', gap: 2,
+    }}>
+      {[0.4, 0.6, 0.3, 0.7, 0.5, 0.8, isUp ? 0.9 : 0.25].map((h, i) => (
+        <div key={i} style={{
+          flex: 1, height: `${h * 100}%`, borderRadius: 2,
+          background: isUp ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
+        }} />
+      ))}
+    </div>
   )
 }
 
@@ -75,15 +73,6 @@ export default function Dashboard({ setPage }) {
   }, [])
 
   const spy = XSTOCKS_LIST.find(x => x.symbol === 'xSPY')
-  const [spyDays, setSpyDays] = useState(60)
-  const SPY_TIMEFRAMES = [
-    { label: '1S', days: 7 },
-    { label: '1M', days: 30 },
-    { label: '3M', days: 60 },
-    { label: '6M', days: 180 },
-    { label: '1A', days: 365 },
-  ]
-  const spyChart = useMemo(() => generateHistoricalData(spy, spyDays), [spyDays])
   const marketTrend = spy.change24h >= 0
 
   // Live xSPY price from Pyth Network
@@ -167,9 +156,9 @@ export default function Dashboard({ setPage }) {
 
       {/* ── Market + Sectors ───────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 20 }}>
-        {/* S&P Chart */}
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        {/* S&P Chart — TradingView */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>xSPY — S&P 500</div>
@@ -181,52 +170,22 @@ export default function Dashboard({ setPage }) {
                 <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: 20 }}>
                   ${(liveSpyPrice ?? spy.price).toLocaleString()}
                 </span>
-                <span className={`  ${marketTrend ? 'positive' : 'negative'}`} style={{ marginLeft: 10, fontWeight: 600 }}>
+                <span style={{ marginLeft: 10, fontWeight: 600, color: marketTrend ? '#4ade80' : '#f87171' }}>
                   {marketTrend ? '+' : ''}{spy.change24h}% 24h
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-              <div style={{ display: 'flex', gap: 3 }}>
-                {SPY_TIMEFRAMES.map(tf => (
-                  <button
-                    key={tf.label}
-                    onClick={() => setSpyDays(tf.days)}
-                    style={{
-                      padding: '3px 9px', borderRadius: 5, cursor: 'pointer', fontSize: 11.5, fontWeight: 600,
-                      border: `1px solid ${spyDays === tf.days ? 'rgba(0,200,150,0.5)' : 'var(--border)'}`,
-                      background: spyDays === tf.days ? 'rgba(0,200,150,0.12)' : 'transparent',
-                      color: spyDays === tf.days ? '#00c896' : 'var(--text-3)',
-                    }}
-                  >{tf.label}</button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <span className="badge badge-gray" style={{ fontSize: 10 }}>52W: ${spy.low52w}–${spy.high52w}</span>
-                <span className={`badge ${marketTrend ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 10 }}>
-                  {marketTrend ? '▲ Bullish' : '▼ Bearish'}
-                </span>
-              </div>
-            </div>
+            <span className={`badge ${marketTrend ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 10 }}>
+              {marketTrend ? '▲ Bullish' : '▼ Bearish'}
+            </span>
           </div>
-          <ResponsiveContainer width="100%" height={170}>
-            <AreaChart data={spyChart}>
-              <defs>
-                <linearGradient id="spyG" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#6366f1" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#4a5568' }} tickLine={false} axisLine={false}
-                tickFormatter={v => v.slice(5)} interval={Math.max(1, Math.floor(spyDays / 6))} />
-              <YAxis tick={{ fontSize: 10, fill: '#4a5568' }} tickLine={false} axisLine={false}
-                tickFormatter={v => `$${v.toFixed(0)}`} width={52}
-                domain={[d => Math.floor(d * 0.97), d => Math.ceil(d * 1.02)]} />
-              <Tooltip contentStyle={{ background: '#0d1421', border: '1px solid #1a2840', borderRadius: 8, fontSize: 12 }}
-                formatter={v => [`$${v.toFixed(2)}`, 'xSPY']} labelStyle={{ color: '#94a3b8' }} />
-              <Area type="monotone" dataKey="price" stroke="#6366f1" strokeWidth={2} fill="url(#spyG)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+          <TradingViewChart
+            symbol="AMEX:SPY"
+            height={300}
+            interval="D"
+            showToolbar={true}
+            showDrawingTools={false}
+          />
         </div>
 
         {/* Sectors — avec détail des actions */}
@@ -323,7 +282,7 @@ export default function Dashboard({ setPage }) {
                     </div>
                   </td>
                   <td style={{ fontWeight: 600 }}>${s.price >= 1000 ? s.price.toLocaleString() : s.price.toFixed(2)}</td>
-                  <td><MiniChart stock={s} /></td>
+                  <td><MiniTrend isUp={s.change24h >= 0} /></td>
                   <td className="positive" style={{ fontWeight: 700 }}>+{s.change24h}%</td>
                 </tr>
               ))}
@@ -350,7 +309,7 @@ export default function Dashboard({ setPage }) {
                     </div>
                   </td>
                   <td style={{ fontWeight: 600 }}>${s.price >= 1000 ? s.price.toLocaleString() : s.price.toFixed(2)}</td>
-                  <td><MiniChart stock={s} /></td>
+                  <td><MiniTrend isUp={s.change24h >= 0} /></td>
                   <td className="negative" style={{ fontWeight: 700 }}>{s.change24h}%</td>
                 </tr>
               ))}

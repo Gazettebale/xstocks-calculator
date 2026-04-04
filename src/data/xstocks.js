@@ -490,6 +490,41 @@ export const LIVE_COUNT = XSTOCKS_LIST.filter(x => x.status === 'live').length
 export const COMING_SOON_COUNT = XSTOCKS_LIST.filter(x => x.status === 'coming_soon').length
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TradingView Symbol Mapping — Maps underlying tickers to TradingView symbols
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TV_SYMBOL_OVERRIDES = {
+  'GOLD':   'TVC:GOLD',
+  'SILVER': 'TVC:SILVER',
+  'WTI':    'TVC:USOIL',
+  'BRK.B':  'NYSE:BRK.B',
+  'BRK.A':  'NYSE:BRK.A',
+  'SPY':    'AMEX:SPY',
+  'QQQ':    'NASDAQ:QQQ',
+  'DIA':    'AMEX:DIA',
+  'IWM':    'AMEX:IWM',
+  'TSM':    'NYSE:TSM',
+}
+
+// NYSE-listed tickers (most are NASDAQ by default)
+const NYSE_TICKERS = new Set([
+  'JPM', 'BAC', 'V', 'MA', 'GS', 'PYPL', 'JNJ', 'PFE', 'LLY', 'UNH', 'ABBV',
+  'WMT', 'NKE', 'MCD', 'HD', 'XOM', 'CVX', 'BA', 'CAT', 'AXP', 'ISRG',
+  'COST', 'SBUX', 'SOFI', 'HOOD',
+])
+
+/**
+ * Get TradingView symbol for any xStock
+ * @param {object} stock - Stock object from XSTOCKS_LIST
+ * @returns {string} TradingView-compatible symbol (e.g. 'NASDAQ:AAPL')
+ */
+export function getTvSymbol(stock) {
+  if (TV_SYMBOL_OVERRIDES[stock.underlying]) return TV_SYMBOL_OVERRIDES[stock.underlying]
+  const exchange = NYSE_TICKERS.has(stock.underlying) ? 'NYSE' : 'NASDAQ'
+  return `${exchange}:${stock.underlying}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SEEDED PRNG — Deterministic random: same inputs = same outputs, always
 // ─────────────────────────────────────────────────────────────────────────────
 
