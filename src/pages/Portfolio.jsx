@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   AreaChart, Area, XAxis, YAxis, ComposedChart, Line, Bar, CartesianGrid,
@@ -320,6 +320,7 @@ function DCATracker({ livePrices }) {
 function WalletTab({ currentPrices, onSelectStock }) {
   const holdings = useWalletStore(s => s.holdings)
   const address = useWalletStore(s => s.address)
+  const costBasis = useWalletStore(s => s.costBasis)
   const addPosition = usePortfolioStore(s => s.addPosition)
   const positions = usePortfolioStore(s => s.positions)
   const [imported, setImported] = useState(false)
@@ -327,10 +328,14 @@ function WalletTab({ currentPrices, onSelectStock }) {
   const enriched = useMemo(() => holdings.map(h => {
     const price = currentPrices[h.stock.symbol] || h.stock.price
     const value = price * h.qty
-    return { ...h, price, value }
-  }).sort((a, b) => b.value - a.value), [holdings, currentPrices])
+    const cb = costBasis[h.mint]
+    const pnl = cb ? (price - cb.avgEntry) * h.qty : null
+    const pnlPct = cb && cb.avgEntry > 0 ? ((price - cb.avgEntry) / cb.avgEntry) * 100 : null
+    return { ...h, price, value, entry: cb?.avgEntry ?? null, pnl, pnlPct }
+  }).sort((a, b) => b.value - a.value), [holdings, currentPrices, costBasis])
 
   const total = enriched.reduce((s, h) => s + h.value, 0)
+  const totalPnL = enriched.reduce((s, h) => s + (h.pnl || 0), 0)
 
   const importAll = () => {
     const existing = new Set(positions.map(p => p.symbol))
@@ -369,7 +374,13 @@ function WalletTab({ currentPrices, onSelectStock }) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>${total.toLocaleString('en', { maximumFractionDigits: 2 })}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>${total.toLocaleString('en', { maximumFractionDigits: 2 })}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: totalPnL >= 0 ? '#4ade80' : '#f87171' }}>
+              {totalPnL >= 0 ? '+' : ''}${totalPnL.toLocaleString('en', { maximumFractionDigits: 2 })}
+              <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 500, marginLeft: 4 }}>PnL depuis suivi</span>
+            </div>
+          </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{enriched.length} xStocks · valeur on-chain live</div>
         </div>
         <button className="btn-primary" onClick={importAll}>
@@ -378,12 +389,12 @@ function WalletTab({ currentPrices, onSelectStock }) {
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12, lineHeight: 1.6 }}>
         Bag complet : xStocks <strong style={{ color: 'var(--text-2)' }}>en wallet (spot)</strong> + <strong style={{ color: '#00e4b5' }}>prêtés sur Kamino</strong> 🏦 + <strong style={{ color: '#8b5cf6' }}>en liquidité Raydium/Orca (LP)</strong> 💧.
-        Pour les LP, un RPC fiable (Helius) est recommandé. L'import crée des positions au prix actuel comme prix d'entrée (ajuste-le ensuite).
+        Pour les LP, un RPC fiable (Helius) est recommandé. Le <strong style={{ color: 'var(--text-2)' }}>PnL est suivi depuis ta 1ère connexion</strong> (coût moyen pondéré sur tes achats), pas depuis ton achat réel d'origine.
       </div>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <table>
           <thead>
-            <tr><th>Asset</th><th>Quantité</th><th>Prix</th><th>Valeur</th><th>Allocation</th></tr>
+            <tr><th>Asset</th><th>Quantité</th><th>Prix</th><th>Valeur</th><th>PnL (suivi)</th><th>Allocation</th></tr>
           </thead>
           <tbody>
             {enriched.map(h => {
@@ -420,6 +431,15 @@ function WalletTab({ currentPrices, onSelectStock }) {
                     {isLive && <span style={{ marginLeft: 5, width: 5, height: 5, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />}
                   </td>
                   <td style={{ fontWeight: 700 }}>${h.value.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
+                  <td>
+                    {h.pnl != null ? (
+                      <div style={{ color: h.pnl >= 0 ? '#4ade80' : '#f87171', fontWeight: 700, fontSize: 12.5 }}
+                        title={`Prix d'entrée suivi: $${h.entry?.toLocaleString('en',{maximumFractionDigits:2})}`}>
+                        {h.pnl >= 0 ? '+' : ''}${h.pnl.toLocaleString('en', { maximumFractionDigits: 2 })}
+                        <div style={{ fontSize: 10.5, fontWeight: 500 }}>{h.pnlPct >= 0 ? '+' : ''}{h.pnlPct?.toFixed(1)}%</div>
+                      </div>
+                    ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                  </td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ flex: 1, maxWidth: 90, height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
@@ -468,6 +488,13 @@ export default function Portfolio() {
     })
     return m
   }, [livePrices])
+
+  // Snapshot wallet cost basis once holdings load (enables a PnL over time)
+  const reconcileCostBasis = useWalletStore(s => s.reconcileCostBasis)
+  useEffect(() => {
+    if (walletHoldings.length) reconcileCostBasis(sym => currentPrices[sym])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletHoldings])
 
   const enriched = useMemo(() => positions.map(pos => {
     const currentPrice = currentPrices[pos.symbol] || pos.entryPrice

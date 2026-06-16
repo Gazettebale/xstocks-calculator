@@ -14,8 +14,34 @@ const useWalletStore = create(
       loading: false,
       error: null,
       lastSync: null,
+      // Cost basis snapshotted from first tracking → enables a PnL that grows over
+      // time without a 3rd-party API. { mint: { avgEntry, qty, since } }
+      costBasis: {},
 
       setRpcUrl: (rpcUrl) => set({ rpcUrl: rpcUrl.trim() }),
+
+      // Update the average entry price from current holdings + live prices.
+      // New holding → snapshot at current price. Bought more → weighted average.
+      // Sold → keep avg, lower qty. Call after holdings load (idempotent on price).
+      reconcileCostBasis: (priceOf) => set(state => {
+        const cb = { ...state.costBasis }
+        for (const h of state.holdings) {
+          const px = (priceOf && priceOf(h.stock.symbol)) || h.stock.price || 0
+          if (!px) continue
+          const prev = cb[h.mint]
+          if (!prev) {
+            cb[h.mint] = { avgEntry: px, qty: h.qty, since: Date.now() }
+          } else if (h.qty > prev.qty + 1e-9) {
+            const added = h.qty - prev.qty
+            cb[h.mint] = { avgEntry: (prev.avgEntry * prev.qty + px * added) / h.qty, qty: h.qty, since: prev.since }
+          } else if (h.qty < prev.qty - 1e-9) {
+            cb[h.mint] = { ...prev, qty: h.qty }
+          }
+        }
+        return { costBasis: cb }
+      }),
+
+      resetCostBasis: () => set({ costBasis: {} }),
 
       connect: async (rawAddress) => {
         const address = (rawAddress ?? '').trim()
@@ -44,7 +70,7 @@ const useWalletStore = create(
     {
       name: 'xstocks-wallet',
       version: 1,
-      partialize: (s) => ({ address: s.address, rpcUrl: s.rpcUrl }),
+      partialize: (s) => ({ address: s.address, rpcUrl: s.rpcUrl, costBasis: s.costBasis }),
     }
   )
 )

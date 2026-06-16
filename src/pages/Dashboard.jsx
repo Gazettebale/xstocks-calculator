@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, STOCKS_BY_SYMBOL } from '../data/xstocks'
 import { PROTOCOLS, SOLANA_PROTOCOLS } from '../data/protocols'
@@ -71,6 +71,8 @@ export default function Dashboard({ setPage }) {
   const positions = usePortfolioStore(s => s.positions)
   const watchlist = usePortfolioStore(s => s.watchlist)
   const walletHoldings = useWalletStore(s => s.holdings)
+  const costBasis = useWalletStore(s => s.costBasis)
+  const reconcileCostBasis = useWalletStore(s => s.reconcileCostBasis)
   const [expandedSector, setExpandedSector] = useState(null)
   const [chartKey, setChartKey] = useState('SPYx')
 
@@ -112,10 +114,26 @@ export default function Dashboard({ setPage }) {
     positions.reduce((s, p) => s + (currentPrices[p.symbol] || p.entryPrice) * p.quantity, 0),
     [positions, currentPrices])
   const totalPortfolioValue = walletValue + positionsValue
-  // PnL only where there is a cost basis (manual positions with an entry price)
-  const totalPnL = useMemo(() =>
+
+  // Snapshot the wallet cost basis once holdings load → enables a PnL over time
+  useEffect(() => {
+    if (walletHoldings.length) reconcileCostBasis(sym => currentPrices[sym])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletHoldings])
+
+  // PnL = manual positions (real entry) + wallet (vs tracked cost basis)
+  const positionsPnL = useMemo(() =>
     positions.reduce((s, p) => s + ((currentPrices[p.symbol] || p.entryPrice) - p.entryPrice) * p.quantity, 0),
     [positions, currentPrices])
+  const walletPnL = useMemo(() =>
+    walletHoldings.reduce((s, h) => {
+      const cb = costBasis[h.mint]
+      if (!cb) return s
+      return s + ((currentPrices[h.stock.symbol] || h.stock.price) - cb.avgEntry) * h.qty
+    }, 0),
+    [walletHoldings, costBasis, currentPrices])
+  const totalPnL = positionsPnL + walletPnL
+  const hasPnL = positions.length > 0 || walletHoldings.length > 0
 
   const sectorData = useMemo(() => {
     const map = {}
@@ -197,7 +215,7 @@ export default function Dashboard({ setPage }) {
                : walletValue > 0 ? `${walletHoldings.length} xStocks on-chain`
                : positions.length > 0 ? `${positions.length} position(s)` : 'Connecte ton wallet',
             color: '#60a5fa', icon: '💼' },
-          { label: 'PnL Total', value: positions.length > 0 ? `${totalPnL >= 0 ? '+' : ''}$${Math.abs(totalPnL).toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: positions.length > 0 ? (totalPnL >= 0 ? '📈 sur positions trackées' : '📉 sur positions trackées') : 'Prix d\'entrée requis', color: positions.length > 0 ? (totalPnL >= 0 ? '#4ade80' : '#f87171') : undefined, icon: totalPnL >= 0 ? '🟢' : '🔴' },
+          { label: 'PnL Total', value: hasPnL ? `${totalPnL >= 0 ? '+' : ''}$${Math.abs(totalPnL).toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: hasPnL ? (totalPnL >= 0 ? '📈 depuis ton suivi' : '📉 depuis ton suivi') : 'Connecte ton wallet', color: hasPnL ? (totalPnL >= 0 ? '#4ade80' : '#f87171') : undefined, icon: totalPnL >= 0 ? '🟢' : '🔴' },
         ].map(s => (
           <div key={s.label} className="stat-card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
