@@ -123,8 +123,10 @@ export async function fetchKaminoHoldings(address) {
     for (const ob of obligations) {
       for (const d of ob?.state?.deposits || []) {
         if (!d?.depositReserve || d.depositReserve === ZERO_PUBKEY) continue
-        if (!d.marketValueSf || d.marketValueSf === '0') continue
-        hits.push({ market, reserve: d.depositReserve, mvSf: d.marketValueSf })
+        const hasVal = d.marketValueSf && d.marketValueSf !== '0'
+        const hasAmt = d.depositedAmount && d.depositedAmount !== '0'
+        if (!hasVal && !hasAmt) continue   // truly empty slot
+        hits.push({ market, reserve: d.depositReserve, mvSf: d.marketValueSf, amount: d.depositedAmount })
       }
     }
   }
@@ -148,11 +150,16 @@ export async function fetchKaminoHoldings(address) {
     const mint = reserveToMint[h.reserve]
     const stock = mint && STOCKS_BY_MINT[mint]
     if (!stock) continue
-    let usd = 0
-    try { usd = Number(BigInt(h.mvSf)) / SF_SCALE } catch { usd = 0 }
     const price = priceByMint[mint] || stock.price || 0
-    const qty = price > 0 ? usd / price : 0
-    if (qty > 0) out.push({ mint, qty, stock, source: 'kamino', usd })
+    let qty = 0
+    // Exact when Kamino reports a USD value; otherwise (marketValueSf=0, e.g. a
+    // not-yet-refreshed reserve) fall back to the on-chain collateral amount —
+    // cToken ≈ underlying for xStocks, which are 8-decimals.
+    if (h.mvSf && h.mvSf !== '0' && price > 0) {
+      try { qty = (Number(BigInt(h.mvSf)) / SF_SCALE) / price } catch { qty = 0 }
+    }
+    if (qty <= 0 && h.amount && h.amount !== '0') qty = Number(h.amount) / 1e8
+    if (qty > 0) out.push({ mint, qty, stock, source: 'kamino' })
   }
   return out
 }
