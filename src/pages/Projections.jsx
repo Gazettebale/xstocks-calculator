@@ -7,6 +7,7 @@ import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generatePr
 import { useLivePrices } from '../hooks/useLiveData'
 import useWalletStore from '../store/walletStore'
 import WalletConnect from '../components/WalletConnect'
+import StockLogo from '../components/StockLogo'
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ function WalletProjection() {
               <tr key={r.mint}>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 17 }}>{r.stock.logo}</span>
+                    <StockLogo stock={r.stock} size={20} />
                     <span style={{ fontWeight: 700, fontSize: 12.5 }}>{r.stock.symbol}</span>
                   </div>
                 </td>
@@ -326,7 +327,7 @@ export default function Projections() {
           padding: '10px 16px', marginBottom: 14, fontSize: 13, color: 'var(--text-2)',
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
-          <span style={{ fontSize: 22, flexShrink: 0 }}>{stock.logo}</span>
+          <StockLogo stock={stock} size={24} />
           <div>
             <span style={{ color: 'var(--text)', fontWeight: 600 }}>{stock.name}</span>
             <span style={{ margin: '0 8px', color: 'var(--text-3)' }}>·</span>
@@ -446,7 +447,7 @@ export default function Projections() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 26 }}>{stock.logo}</span>
+              <StockLogo stock={stock} size={28} />
               <div>
                 <div style={{ fontSize: 16, fontWeight: 800 }}>{stock.name}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{stock.symbol} · {stock.sector}</div>

@@ -4,6 +4,7 @@ import { getProtocolsForStock } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import { useLivePrices } from '../hooks/useLiveData'
 import TradingViewChart from '../components/TradingViewChart'
+import StockLogo from '../components/StockLogo'
 import { AreaChart, Area, ResponsiveContainer } from 'recharts'
 
 // Symbols to fetch live prices for (only live xStocks)
@@ -89,7 +90,7 @@ function StockModal({ stock, liveData, onClose }) {
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{ fontSize: 40 }}>{stock.logo}</div>
+            <StockLogo stock={stock} size={44} />
             <div>
               <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.03em' }}>{stock.name}</div>
               <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginTop: 2 }}>
@@ -345,7 +346,7 @@ export default function Markets() {
                 <tr key={stock.symbol} style={{ cursor: 'pointer' }} onClick={() => setSelected(stock)}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 22, lineHeight: 1 }}>{stock.logo}</span>
+                      <StockLogo stock={stock} size={26} />
                       <div>
                         <div style={{ fontWeight: 700, fontSize: 13.5, display: 'flex', alignItems: 'center', gap: 6 }}>
                           {stock.symbol}

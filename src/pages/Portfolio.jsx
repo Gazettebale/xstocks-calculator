@@ -9,6 +9,7 @@ import usePortfolioStore from '../store/portfolioStore'
 import useWalletStore from '../store/walletStore'
 import { useLivePrices } from '../hooks/useLiveData'
 import WalletConnect from '../components/WalletConnect'
+import StockLogo from '../components/StockLogo'
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -391,7 +392,7 @@ function WalletTab({ currentPrices }) {
                 <tr key={h.mint}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 20 }}>{h.stock.logo}</span>
+                      <StockLogo stock={h.stock} size={22} />
                       <div>
                         <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
                           {h.stock.symbol}
@@ -656,7 +657,7 @@ export default function Portfolio() {
                         <tr key={pos.id}>
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <span style={{ fontSize: 20 }}>{pos.stock?.logo || '📊'}</span>
+                              <StockLogo stock={pos.stock} size={22} />
                               <div>
                                 <div style={{ fontWeight: 700, fontSize: 13 }}>{pos.symbol}</div>
                                 <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{pos.name}</div>
@@ -760,7 +761,7 @@ export default function Portfolio() {
                       <tr key={sym}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ fontSize: 22 }}>{s.logo}</span>
+                            <StockLogo stock={s} size={24} />
                             <div>
                               <div style={{ fontWeight: 700 }}>{s.symbol}</div>
                               <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{s.name}</div>

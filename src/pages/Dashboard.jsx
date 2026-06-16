@@ -6,6 +6,7 @@ import usePortfolioStore from '../store/portfolioStore'
 import { useLivePrices } from '../hooks/useLiveData'
 import TradingViewChart from '../components/TradingViewChart'
 import WalletConnect from '../components/WalletConnect'
+import StockLogo from '../components/StockLogo'
 
 const SECTOR_COLORS = ['#00c896','#14f195','#f59e0b','#ec4899','#06b6d4','#a855f7','#f43f5e','#10b981']
 
@@ -280,7 +281,7 @@ export default function Dashboard({ setPage }) {
                 <tr key={s.symbol}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 18 }}>{s.logo}</span>
+                      <StockLogo stock={s} size={20} />
                       <div>
                         <div style={{ fontWeight: 700, fontSize: 13 }}>{s.symbol}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.underlying}</div>
@@ -307,7 +308,7 @@ export default function Dashboard({ setPage }) {
                 <tr key={s.symbol}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 18 }}>{s.logo}</span>
+                      <StockLogo stock={s} size={20} />
                       <div>
                         <div style={{ fontWeight: 700, fontSize: 13 }}>{s.symbol}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.underlying}</div>
