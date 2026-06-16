@@ -195,7 +195,7 @@ function ProtocolCard({ protocol, liveTvl, liveApyRange, poolCount }) {
 // ── Main Component ──────────────────────────────────────────────────────────
 
 export default function DefiHub() {
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState('yields')
   const [yieldSort, setYieldSort] = useState({ key: 'apy', dir: 'desc' })
   const [yieldFilter, setYieldFilter] = useState('all')
   const [yieldSearch, setYieldSearch] = useState('')
@@ -298,8 +298,8 @@ export default function DefiHub() {
 
   // ── Tab definitions ──
   const TABS = [
-    { id: 'overview', label: 'Overview' },
     { id: 'yields', label: 'Rendements xStocks' },
+    { id: 'overview', label: 'Overview' },
     { id: 'xpoints', label: '⭐ xPoints', highlight: true },
   ]
 
