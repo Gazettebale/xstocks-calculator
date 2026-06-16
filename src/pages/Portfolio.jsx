@@ -10,6 +10,7 @@ import useWalletStore from '../store/walletStore'
 import { useLivePrices } from '../hooks/useLiveData'
 import WalletConnect from '../components/WalletConnect'
 import StockLogo from '../components/StockLogo'
+import StockDetailModal from '../components/StockDetailModal'
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -24,8 +25,8 @@ const STRATEGY_LABELS = {
 }
 
 const TABS = [
-  { id: 'positions', label: '💼 Positions' },
   { id: 'wallet',    label: '🔗 Wallet' },
+  { id: 'positions', label: '💼 Positions' },
   { id: 'dca',       label: '📅 DCA Tracker' },
   { id: 'watchlist', label: '⭐ Watchlist' },
   { id: 'sectors',   label: '🗂️ Secteurs' },
@@ -316,7 +317,7 @@ function DCATracker({ livePrices }) {
 
 // ─── Wallet tab — live on-chain holdings ─────────────────────────────────────
 
-function WalletTab({ currentPrices }) {
+function WalletTab({ currentPrices, onSelectStock }) {
   const holdings = useWalletStore(s => s.holdings)
   const address = useWalletStore(s => s.address)
   const addPosition = usePortfolioStore(s => s.addPosition)
@@ -389,7 +390,7 @@ function WalletTab({ currentPrices }) {
               const pct = total > 0 ? (h.value / total) * 100 : 0
               const isLive = !!currentPrices[h.stock.symbol]
               return (
-                <tr key={h.mint}>
+                <tr key={h.mint} onClick={() => onSelectStock?.(h.stock)} style={{ cursor: 'pointer' }} title="Voir le détail">
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <StockLogo stock={h.stock} size={22} />
@@ -446,7 +447,8 @@ export default function Portfolio() {
   const removeFromWatchlist = usePortfolioStore(s => s.removeFromWatchlist)
   const walletHoldings = useWalletStore(s => s.holdings)
   const [showAddModal, setShowAddModal] = useState(false)
-  const [activeTab, setActiveTab] = useState('positions')
+  const [activeTab, setActiveTab] = useState('wallet')
+  const [detailStock, setDetailStock] = useState(null)
 
   // Fetch live prices for all stocks in positions + watchlist
   const allSymbols = useMemo(() => {
@@ -513,6 +515,7 @@ export default function Portfolio() {
   return (
     <div>
       {showAddModal && <AddPositionModal onClose={() => setShowAddModal(false)} livePrices={livePrices} />}
+      {detailStock && <StockDetailModal stock={detailStock} liveData={livePrices[detailStock.symbol]} onClose={() => setDetailStock(null)} />}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
@@ -554,7 +557,7 @@ export default function Portfolio() {
       </div>
 
       {/* ── Wallet tab — live on-chain holdings ────────────────────────────── */}
-      {activeTab === 'wallet' && <WalletTab currentPrices={currentPrices} />}
+      {activeTab === 'wallet' && <WalletTab currentPrices={currentPrices} onSelectStock={setDetailStock} />}
 
       {/* ── DCA tab — always available ─────────────────────────────────────── */}
       {activeTab === 'dca' && <DCATracker livePrices={livePrices} />}
