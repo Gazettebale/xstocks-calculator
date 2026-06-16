@@ -4,7 +4,7 @@ import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, STOCKS_BY_SYM
 import { PROTOCOLS, SOLANA_PROTOCOLS } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import useWalletStore from '../store/walletStore'
-import { useLivePrices, useLiveTVLs } from '../hooks/useLiveData'
+import { useLivePrices, useLiveTVLs, useTVLHistory } from '../hooks/useLiveData'
 import TradingViewChart from '../components/TradingViewChart'
 import WalletConnect from '../components/WalletConnect'
 import StockLogo from '../components/StockLogo'
@@ -62,8 +62,20 @@ export default function Dashboard({ setPage }) {
   const { tvls } = useLiveTVLs()
 
   // Real xStocks TVL — total value of xStocks tokenized (DeFiLlama "xstocks" protocol),
-  // NOT the side-protocols' total TVL.
+  // NOT the side-protocols' total TVL. + 24h / 30d adoption trend from TVL history.
   const xstocksTVL = tvls.xstocks || 0
+  const { history: xstocksHist } = useTVLHistory('xstocks')
+  const tvlTrend = useMemo(() => {
+    if (!xstocksHist?.length) return null
+    const last = xstocksHist.length - 1
+    const cur = xstocksHist[last].tvl
+    const at = (d) => xstocksHist[Math.max(0, last - d)]?.tvl  // history is daily
+    const d1 = at(1), d30 = at(30)
+    return {
+      chg24h: d1 ? (cur / d1 - 1) * 100 : null,
+      chg30d: d30 ? (cur / d30 - 1) * 100 : null,
+    }
+  }, [xstocksHist])
 
   // Live price per symbol (Pyth, fallback to baseline)
   const currentPrices = useMemo(() => {
@@ -144,7 +156,22 @@ export default function Dashboard({ setPage }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
         {[
           { label: 'xStocks Live', value: LIVE_COUNT, sub: `+${COMING_SOON_COUNT} coming soon`, color: '#4ade80', icon: '📈' },
-          { label: 'TVL xStocks', value: xstocksTVL > 0 ? `$${xstocksTVL >= 1e9 ? (xstocksTVL / 1e9).toFixed(2) + 'B' : (xstocksTVL / 1e6).toFixed(0) + 'M'}` : '…', sub: 'valeur tokenisée · live DeFiLlama', color: '#00e4b5', icon: '🏦' },
+          { label: 'TVL xStocks', value: xstocksTVL > 0 ? `$${xstocksTVL >= 1e9 ? (xstocksTVL / 1e9).toFixed(2) + 'B' : (xstocksTVL / 1e6).toFixed(0) + 'M'}` : '…',
+            sub: tvlTrend ? (
+              <span title="Évolution de la valeur xStocks tokenisée (DeFiLlama)">
+                {tvlTrend.chg30d != null && (
+                  <span style={{ color: tvlTrend.chg30d >= 0 ? '#4ade80' : '#f87171', fontWeight: 700 }}>
+                    {tvlTrend.chg30d >= 0 ? '↑' : '↓'}{Math.abs(tvlTrend.chg30d).toFixed(1)}% 30j
+                  </span>
+                )}
+                {tvlTrend.chg24h != null && (
+                  <span style={{ marginLeft: 8, color: 'var(--text-3)' }}>
+                    {tvlTrend.chg24h >= 0 ? '+' : ''}{tvlTrend.chg24h.toFixed(1)}% 24h
+                  </span>
+                )}
+              </span>
+            ) : 'valeur tokenisée · live DeFiLlama',
+            color: '#00e4b5', icon: '🏦' },
           { label: 'Mon Portfolio', value: totalPortfolioValue > 0 ? `$${totalPortfolioValue.toLocaleString('en',{maximumFractionDigits:0})}` : '—',
             sub: walletValue > 0 && positions.length > 0 ? `wallet + ${positions.length} manuelle(s)`
                : walletValue > 0 ? `${walletHoldings.length} xStocks on-chain`
