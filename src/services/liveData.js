@@ -261,6 +261,7 @@ const DEFILLAMA_SLUGS = {
   marginfi:    'marginfi',
   titan:       'titan-exchange',
   hyperliquid: 'hyperliquid',
+  xstocks:     'xstocks',     // total xStocks tokenized value (the real xStocks TVL)
 }
 
 // Map: protocolId → DeFiLlama yields project name (for matching pools)

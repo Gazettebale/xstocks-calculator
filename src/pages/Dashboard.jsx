@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, STOCKS_BY_SYMBOL } from '../data/xstocks'
-import { PROTOCOLS, SOLANA_PROTOCOLS, TOTAL_TVL } from '../data/protocols'
+import { PROTOCOLS, SOLANA_PROTOCOLS } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import useWalletStore from '../store/walletStore'
 import { useLivePrices, useLiveTVLs } from '../hooks/useLiveData'
@@ -61,13 +61,9 @@ export default function Dashboard({ setPage }) {
   const { prices: livePrices } = useLivePrices(liveSymbols)
   const { tvls } = useLiveTVLs()
 
-  // Real protocol TVL — sum of live DeFiLlama TVLs for the SOLANA protocols only
-  // (excludes Hyperliquid L1 and points programs). Fallback to the static estimate.
-  const solanaIds = useMemo(() => new Set(SOLANA_PROTOCOLS.filter(p => !p.isPointsProgram).map(p => p.id)), [])
-  const liveTVL = useMemo(() => {
-    const sum = Object.entries(tvls).filter(([id]) => solanaIds.has(id)).reduce((s, [, v]) => s + (v || 0), 0)
-    return sum > 0 ? sum : TOTAL_TVL * 1e6
-  }, [tvls, solanaIds])
+  // Real xStocks TVL — total value of xStocks tokenized (DeFiLlama "xstocks" protocol),
+  // NOT the side-protocols' total TVL.
+  const xstocksTVL = tvls.xstocks || 0
 
   // Live price per symbol (Pyth, fallback to baseline)
   const currentPrices = useMemo(() => {
@@ -148,7 +144,7 @@ export default function Dashboard({ setPage }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
         {[
           { label: 'xStocks Live', value: LIVE_COUNT, sub: `+${COMING_SOON_COUNT} coming soon`, color: '#4ade80', icon: '📈' },
-          { label: 'TVL Protocoles', value: `$${(liveTVL / 1e9).toFixed(2)}B`, sub: `${SOLANA_PROTOCOLS.filter(p=>!p.isPointsProgram).length} protocoles · live DeFiLlama`, color: '#00e4b5', icon: '🏦' },
+          { label: 'TVL xStocks', value: xstocksTVL > 0 ? `$${xstocksTVL >= 1e9 ? (xstocksTVL / 1e9).toFixed(2) + 'B' : (xstocksTVL / 1e6).toFixed(0) + 'M'}` : '…', sub: 'valeur tokenisée · live DeFiLlama', color: '#00e4b5', icon: '🏦' },
           { label: 'Mon Portfolio', value: totalPortfolioValue > 0 ? `$${totalPortfolioValue.toLocaleString('en',{maximumFractionDigits:0})}` : '—',
             sub: walletValue > 0 && positions.length > 0 ? `wallet + ${positions.length} manuelle(s)`
                : walletValue > 0 ? `${walletHoldings.length} xStocks on-chain`

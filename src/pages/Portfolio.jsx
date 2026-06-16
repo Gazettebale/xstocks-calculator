@@ -657,7 +657,8 @@ export default function Portfolio() {
                     {enriched.map(pos => {
                       const strat = STRATEGY_LABELS[pos.strategy] || STRATEGY_LABELS.hold
                       return (
-                        <tr key={pos.id}>
+                        <tr key={pos.id} onClick={() => pos.stock && setDetailStock(pos.stock)}
+                          style={{ cursor: pos.stock ? 'pointer' : 'default' }} title={pos.stock ? 'Voir le détail' : undefined}>
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <StockLogo stock={pos.stock} size={22} />
@@ -690,7 +691,7 @@ export default function Portfolio() {
                           <td>
                             {pos.protocol ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                <a href={pos.protocol.url} target="_blank" rel="noopener noreferrer"
+                                <a href={pos.protocol.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                                   style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-2)', textDecoration: 'none', fontSize: 12 }}>
                                   <span>{pos.protocol.logo}</span>{pos.protocol.name.split(' ')[0]}
                                 </a>
@@ -710,7 +711,7 @@ export default function Portfolio() {
                           </td>
                           <td>
                             <button
-                              onClick={() => removePosition(pos.id)}
+                              onClick={(e) => { e.stopPropagation(); removePosition(pos.id) }}
                               style={{
                                 background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
                                 color: '#f87171', borderRadius: 6, cursor: 'pointer',
