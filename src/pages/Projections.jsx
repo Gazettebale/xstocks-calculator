@@ -69,6 +69,8 @@ const WALLET_HORIZONS = [
   { label: '1 an', years: 1 }, { label: '3 ans', years: 3 },
   { label: '5 ans', years: 5 }, { label: '10 ans', years: 10 }, { label: '20 ans', years: 20 },
 ]
+// Cautious baseline (%/yr) — below even broad indices, used as a "prudent floor"
+const PRUDENT_RATE = 6
 
 function WalletProjection() {
   const holdings = useWalletStore(s => s.holdings)
@@ -84,12 +86,12 @@ function WalletProjection() {
     const base = getSectorCagr(h.stock.sector) * 100
     const spread = Math.min((h.stock.beta || 1) * base * 0.7, base * 1.5)
     const proj = (bias) => h.qty * price * Math.pow(1 + bias / 100, horizon)
-    return { ...h, price, value, cagr: base, bear: proj(base - spread), base: proj(base), bull: proj(base + spread) }
+    return { ...h, price, value, cagr: base, prudent: proj(PRUDENT_RATE), bear: proj(base - spread), base: proj(base), bull: proj(base + spread) }
   }).sort((a, b) => b.value - a.value), [holdings, livePrices, horizon])
 
   const tot = rows.reduce((a, r) => ({
-    cur: a.cur + r.value, bear: a.bear + r.bear, base: a.base + r.base, bull: a.bull + r.bull,
-  }), { cur: 0, bear: 0, base: 0, bull: 0 })
+    cur: a.cur + r.value, prudent: a.prudent + r.prudent, bear: a.bear + r.bear, base: a.base + r.base, bull: a.bull + r.bull,
+  }), { cur: 0, prudent: 0, bear: 0, base: 0, bull: 0 })
 
   if (!address || rows.length === 0) return null
 
@@ -127,11 +129,15 @@ function WalletProjection() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 8 }}>
         {tile('Aujourd\'hui', tot.cur, '#a5b4fc', '📍')}
+        {tile(`Prudent ${PRUDENT_RATE}%`, tot.prudent, '#a78bfa', '🛡️')}
         {tile('Bear', tot.bear, '#ef4444', '🐻')}
         {tile('Base', tot.base, '#60a5fa', '📊')}
         {tile('Bull', tot.bull, '#10b981', '🐂')}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14 }}>
+        🛡️ <strong>Prudent</strong> = {PRUDENT_RATE}%/an fixe (plancher conservateur, en-dessous des indices) · Bear/Base/Bull basés sur le CAGR historique du secteur · <em>scénarios, pas des prévisions</em>
       </div>
 
       <div style={{ overflowX: 'auto' }}>
@@ -172,7 +178,7 @@ export default function Projections() {
   const [selectedSymbol, setSelectedSymbol] = useState('AAPLx')
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[2])
   const [showFan, setShowFan] = useState(true)
-  const [activeScenarios, setActiveScenarios] = useState(new Set(['bear', 'base', 'bull']))
+  const [activeScenarios, setActiveScenarios] = useState(new Set(['prudent', 'bear', 'base', 'bull']))
   const [entryPrice, setEntryPrice] = useState('')
   const [quantity, setQuantity] = useState('')
   const [customReturn, setCustomReturn] = useState('')
@@ -204,6 +210,7 @@ export default function Projections() {
   // Caps spread at 1.5× sector base to avoid unrealistic outliers
   const betaSpread = Math.min(stock.beta * sectorBase * 0.7, sectorBase * 1.5)
   const SCENARIOS = [
+    { id: 'prudent', label: `🛡️ Prudent ${PRUDENT_RATE}%`, bias: PRUDENT_RATE, color: '#a78bfa' },
     { id: 'bear', label: '🐻 Bear', bias: baseReturn - betaSpread, color: '#ef4444' },
     { id: 'base', label: '📊 Base', bias: baseReturn, color: '#60a5fa' },
     { id: 'bull', label: '🐂 Bull', bias: baseReturn + betaSpread, color: '#10b981' },
@@ -613,7 +620,7 @@ export default function Projections() {
       </div>
 
       {/* ── Scenario result cards ──────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 18 }}>
         {SCENARIOS.map(s => {
           const end = ends[s.id]
           const pct = (((end - stock.price) / stock.price) * 100).toFixed(1)

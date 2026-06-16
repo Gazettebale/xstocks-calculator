@@ -342,21 +342,25 @@ function mulberry32(seed) {
 // ─────────────────────────────────────────────────────────────────────────────
 // HISTORICAL CAGR — long-term average annual returns by sub-sector
 // ─────────────────────────────────────────────────────────────────────────────
+// Conservative long-term nominal CAGR by sector. Deliberately BELOW the euphoric
+// last-decade numbers: hot sectors mean-revert and single stocks carry idiosyncratic
+// risk, so these are defensible "if long-run averages roughly hold" baselines —
+// not predictions. Broad indices ~8% (vs ~10% historical, kept prudent).
 const SECTOR_CAGR = {
-  'Hardware & Semi-conducteurs': 0.160,
-  'Logiciels & Cloud':           0.150,
-  'IA & Tech de Pointe':         0.200,
-  'Internet & Médias':           0.140,
-  'Crypto & Actifs Numériques':  0.220,
-  'Finance & Banques':           0.098,
-  'Santé & Pharma':              0.104,
-  'Consommation & Distribution': 0.090,
-  'Énergie & Nucléaire':         0.085,
-  'Industrie':                   0.094,
-  'Matières Premières & Métaux': 0.060,
-  'ETF & Indices':               0.105,
-  'Obligations & Revenu':        0.040,
-  'Autres':                      0.090,
+  'Hardware & Semi-conducteurs': 0.110,
+  'Logiciels & Cloud':           0.110,
+  'IA & Tech de Pointe':         0.120,
+  'Internet & Médias':           0.100,
+  'Crypto & Actifs Numériques':  0.130,
+  'Finance & Banques':           0.080,
+  'Santé & Pharma':              0.090,
+  'Consommation & Distribution': 0.080,
+  'Énergie & Nucléaire':         0.070,
+  'Industrie':                   0.080,
+  'Matières Premières & Métaux': 0.050,
+  'ETF & Indices':               0.080,
+  'Obligations & Revenu':        0.035,
+  'Autres':                      0.070,
 }
 export function getSectorCagr(sector) { return SECTOR_CAGR[sector] ?? 0.105 }
 
