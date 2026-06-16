@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { STOCKS_BY_MINT } from '../data/xstocks'
+import { fetchLpHoldings } from './lpPositions'
 
 // Public CORS-enabled RPC by default. Override with VITE_SOLANA_RPC (e.g. a Helius
 // URL) for reliability, or let the user paste their own RPC in the UI.
@@ -46,15 +47,8 @@ async function tokenAccountsFor(rpcUrl, address, programId) {
   return result?.value ?? []
 }
 
-/**
- * Read all xStock holdings for a public Solana address.
- * @returns {Promise<Array<{ mint, qty, stock }>>} sorted by descending quantity
- */
-export async function fetchWalletHoldings(address, rpcUrl = DEFAULT_RPC) {
-  const addr = (address || '').trim()
-  if (!isValidSolanaAddress(addr)) throw new Error('Adresse Solana invalide')
-
-  // Query both token programs (xStocks are Token-2022; classic is a safety net)
+// Fetch all token accounts (both token programs) once.
+async function fetchRawTokenAccounts(addr, rpcUrl) {
   const settled = await Promise.allSettled([
     tokenAccountsFor(rpcUrl, addr, TOKEN_2022_PROGRAM),
     tokenAccountsFor(rpcUrl, addr, TOKEN_PROGRAM),
@@ -62,24 +56,36 @@ export async function fetchWalletHoldings(address, rpcUrl = DEFAULT_RPC) {
   if (settled.every(s => s.status === 'rejected')) {
     throw new Error(settled[0].reason?.message || 'Lecture RPC impossible')
   }
-  const accounts = settled.flatMap(s => (s.status === 'fulfilled' ? s.value : []))
+  return settled.flatMap(s => (s.status === 'fulfilled' ? s.value : []))
+}
 
-  const holdings = []
+// From raw token accounts: spot xStock holdings + candidate LP-position NFT mints.
+function extractSpotAndNfts(accounts) {
+  const spotByMint = {}
+  const nftMints = []
   for (const acc of accounts) {
     const info = acc?.account?.data?.parsed?.info
     if (!info) continue
+    const amt = info.tokenAmount
+    // Candidate position NFT: exactly 1 token, 0 decimals
+    if (amt?.decimals === 0 && amt?.amount === '1') nftMints.push(info.mint)
     const stock = STOCKS_BY_MINT[info.mint]
     if (!stock) continue
-    const qty = info.tokenAmount?.uiAmount ?? 0
-    if (qty > 0) holdings.push({ mint: info.mint, qty, stock })
+    const qty = amt?.uiAmount ?? 0
+    if (qty > 0) spotByMint[info.mint] = { mint: info.mint, qty: (spotByMint[info.mint]?.qty || 0) + qty, stock }
   }
-  // Merge any split across multiple token accounts of the same mint
-  const byMint = {}
-  for (const h of holdings) {
-    if (byMint[h.mint]) byMint[h.mint].qty += h.qty
-    else byMint[h.mint] = { ...h }
-  }
-  return Object.values(byMint).sort((a, b) => b.qty - a.qty)
+  return { spot: Object.values(spotByMint), nftMints }
+}
+
+/**
+ * Read all xStock holdings for a public Solana address.
+ * @returns {Promise<Array<{ mint, qty, stock }>>} sorted by descending quantity
+ */
+export async function fetchWalletHoldings(address, rpcUrl = DEFAULT_RPC) {
+  const addr = (address || '').trim()
+  if (!isValidSolanaAddress(addr)) throw new Error('Adresse Solana invalide')
+  const accounts = await fetchRawTokenAccounts(addr, rpcUrl)
+  return extractSpotAndNfts(accounts).spot.sort((a, b) => b.qty - a.qty)
 }
 
 // ── Kamino lending positions ────────────────────────────────────────────────
@@ -151,20 +157,31 @@ export async function fetchKaminoHoldings(address) {
   return out
 }
 
-// ── Combined: spot wallet + Kamino lending, merged per mint with source split ─
+// ── Combined: spot wallet + Kamino lending + Raydium/Orca LP ─────────────────
+// Merged per mint with a per-source quantity split. One token-account fetch feeds
+// both the spot holdings and the LP-position-NFT discovery.
 export async function fetchAllHoldings(address, rpcUrl = DEFAULT_RPC) {
   const addr = (address || '').trim()
   if (!isValidSolanaAddress(addr)) throw new Error('Adresse Solana invalide')
 
-  const [spotRes, kaminoRes] = await Promise.allSettled([
-    fetchWalletHoldings(addr, rpcUrl),
+  // Spot + NFT candidates (one fetch). If this fails entirely, we still try Kamino.
+  let spot = [], nftMints = []
+  let spotFailed = false
+  try {
+    const { spot: s, nftMints: n } = extractSpotAndNfts(await fetchRawTokenAccounts(addr, rpcUrl))
+    spot = s; nftMints = n
+  } catch { spotFailed = true }
+
+  const [kaminoRes, lpRes] = await Promise.allSettled([
     fetchKaminoHoldings(addr),
+    fetchLpHoldings(nftMints, rpcUrl),
   ])
-  if (spotRes.status === 'rejected' && kaminoRes.status === 'rejected') {
-    throw new Error(spotRes.reason?.message || 'Lecture wallet impossible')
-  }
-  const spot = spotRes.status === 'fulfilled' ? spotRes.value : []
   const kamino = kaminoRes.status === 'fulfilled' ? kaminoRes.value : []
+  const lp = lpRes.status === 'fulfilled' ? lpRes.value : []
+
+  if (spotFailed && !kamino.length && !lp.length) {
+    throw new Error('Lecture wallet impossible (RPC ou réseau)')
+  }
 
   const byMint = {}
   const add = (mint, qty, stock, source) => {
@@ -174,5 +191,6 @@ export async function fetchAllHoldings(address, rpcUrl = DEFAULT_RPC) {
   }
   spot.forEach(h => add(h.mint, h.qty, h.stock, 'wallet'))
   kamino.forEach(h => add(h.mint, h.qty, h.stock, 'kamino'))
+  lp.forEach(h => add(h.mint, h.qty, h.stock, 'lp'))
   return Object.values(byMint).sort((a, b) => b.qty - a.qty)
 }

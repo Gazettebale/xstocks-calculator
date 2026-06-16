@@ -375,9 +375,8 @@ function WalletTab({ currentPrices }) {
         </button>
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12, lineHeight: 1.6 }}>
-        Inclut tes xStocks <strong style={{ color: 'var(--text-2)' }}>en wallet (spot)</strong> + ceux <strong style={{ color: '#00e4b5' }}>prêtés sur Kamino</strong>.
-        Pas encore comptés : les positions de <strong style={{ color: 'var(--text-2)' }}>liquidité Raydium/Orca (LP)</strong> — intégration on-chain à venir.
-        L'import crée des positions avec le prix actuel comme prix d'entrée (ajuste-le ensuite).
+        Bag complet : xStocks <strong style={{ color: 'var(--text-2)' }}>en wallet (spot)</strong> + <strong style={{ color: '#00e4b5' }}>prêtés sur Kamino</strong> 🏦 + <strong style={{ color: '#8b5cf6' }}>en liquidité Raydium/Orca (LP)</strong> 💧.
+        Pour les LP, un RPC fiable (Helius) est recommandé. L'import crée des positions au prix actuel comme prix d'entrée (ajuste-le ensuite).
       </div>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <table>
@@ -400,6 +399,12 @@ function WalletTab({ currentPrices }) {
                             <span title={`${h.sources.kamino.toLocaleString('en',{maximumFractionDigits:2})} prêtés sur Kamino`}
                               style={{ fontSize: 9.5, fontWeight: 700, color: '#00e4b5', background: 'rgba(0,200,150,0.12)', border: '1px solid rgba(0,200,150,0.3)', borderRadius: 4, padding: '1px 5px' }}>
                               🏦 Kamino
+                            </span>
+                          )}
+                          {h.sources?.lp > 0 && (
+                            <span title={`${h.sources.lp.toLocaleString('en',{maximumFractionDigits:2})} en liquidité (Raydium/Orca)`}
+                              style={{ fontSize: 9.5, fontWeight: 700, color: '#a78bfa', background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: 4, padding: '1px 5px' }}>
+                              💧 LP
                             </span>
                           )}
                         </div>
