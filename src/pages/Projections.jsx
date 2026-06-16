@@ -184,12 +184,13 @@ export default function Projections() {
   const liveSymbols = useMemo(() => [selectedSymbol], [selectedSymbol])
   const { prices: livePrices, loading: priceLoading } = useLivePrices(liveSymbols)
   const livePrice = livePrices[selectedSymbol]?.price
+  const liveChg = livePrices[selectedSymbol]?.change24h
 
-  // Merge live price into stock object
+  // Merge live price + 24h change into stock object
   const stock = useMemo(() => {
-    if (!livePrice) return staticStock
-    return { ...staticStock, price: livePrice }
-  }, [staticStock, livePrice])
+    if (!livePrice && liveChg == null) return staticStock
+    return { ...staticStock, price: livePrice ?? staticStock.price, change24h: liveChg ?? staticStock.change24h }
+  }, [staticStock, livePrice, liveChg])
 
   const historicalData = useMemo(() => generateHistoricalData(stock, timeframe.histDays), [selectedSymbol, timeframe.histDays])
 

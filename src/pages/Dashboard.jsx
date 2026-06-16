@@ -58,10 +58,8 @@ export default function Dashboard({ setPage }) {
     [positions, currentPrices]
   )
 
-  const liveStocks = XSTOCKS_LIST.filter(x => x.status === 'live')
-  const topGainers = [...liveStocks].sort((a, b) => b.change24h - a.change24h).slice(0, 4)
-  const topLosers = [...liveStocks].sort((a, b) => a.change24h - b.change24h).slice(0, 3)
-  const topVolume = [...liveStocks].sort((a, b) => parseFloat(b.volume24h) - parseFloat(a.volume24h)).slice(0, 3)
+  const liveStocks = useMemo(() => XSTOCKS_LIST.filter(x => x.status === 'live'), [])
+  const liveSymbols = useMemo(() => liveStocks.map(s => s.symbol), [liveStocks])
   const activeAirdrops = PROTOCOLS.filter(p => p.airdrop?.active)
   const [expandedSector, setExpandedSector] = useState(null)
 
@@ -77,12 +75,20 @@ export default function Dashboard({ setPage }) {
   }, [])
 
   const spy = XSTOCKS_LIST.find(x => x.symbol === 'SPYx') ?? XSTOCKS_LIST[0]
-  const marketTrend = (spy?.change24h ?? 0) >= 0
 
-  // Live SPYx price from Pyth Network
-  const { prices: livePrices, marketOpen, lastUpdate: liveTs } = useLivePrices(['SPYx'])
+  // Live prices + real 24h change from Pyth for all live xStocks
+  const { prices: livePrices, marketOpen, lastUpdate: liveTs } = useLivePrices(liveSymbols)
   const liveSpyEntry = livePrices['SPYx']
   const liveSpyPrice = liveSpyEntry?.price
+  const spyChg = liveSpyEntry?.change24h ?? (spy?.change24h || null)
+  const marketTrend = (spyChg ?? 0) >= 0
+
+  // Real 24h change drives gainers/losers (fallback to static until prices load)
+  const ranked = useMemo(() => liveStocks
+    .map(s => ({ s, c: livePrices[s.symbol]?.change24h ?? (s.change24h ?? null) }))
+    .filter(x => x.c != null && x.c !== 0), [livePrices, liveStocks])
+  const topGainers = [...ranked].sort((a, b) => b.c - a.c).slice(0, 4).map(x => ({ ...x.s, _chg: x.c }))
+  const topLosers = [...ranked].sort((a, b) => a.c - b.c).slice(0, 3).map(x => ({ ...x.s, _chg: x.c }))
   const spyIsLive    = liveSpyEntry?.isLive ?? false
 
   return (
@@ -177,9 +183,11 @@ export default function Dashboard({ setPage }) {
                 <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: 20 }}>
                   ${(liveSpyPrice ?? spy.price).toLocaleString()}
                 </span>
-                <span style={{ marginLeft: 10, fontWeight: 600, color: marketTrend ? '#4ade80' : '#f87171' }}>
-                  {marketTrend ? '+' : ''}{spy.change24h}% 24h
-                </span>
+                {spyChg != null && (
+                  <span style={{ marginLeft: 10, fontWeight: 600, color: marketTrend ? '#4ade80' : '#f87171' }}>
+                    {marketTrend ? '+' : ''}{spyChg}% 24h
+                  </span>
+                )}
               </div>
             </div>
             <span className={`badge ${marketTrend ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 10 }}>
@@ -289,8 +297,8 @@ export default function Dashboard({ setPage }) {
                     </div>
                   </td>
                   <td style={{ fontWeight: 600 }}>${s.price >= 1000 ? s.price.toLocaleString() : s.price.toFixed(2)}</td>
-                  <td><MiniTrend isUp={s.change24h >= 0} /></td>
-                  <td className="positive" style={{ fontWeight: 700 }}>+{s.change24h}%</td>
+                  <td><MiniTrend isUp={s._chg >= 0} /></td>
+                  <td className="positive" style={{ fontWeight: 700 }}>+{s._chg}%</td>
                 </tr>
               ))}
             </tbody>
@@ -316,8 +324,8 @@ export default function Dashboard({ setPage }) {
                     </div>
                   </td>
                   <td style={{ fontWeight: 600 }}>${s.price >= 1000 ? s.price.toLocaleString() : s.price.toFixed(2)}</td>
-                  <td><MiniTrend isUp={s.change24h >= 0} /></td>
-                  <td className="negative" style={{ fontWeight: 700 }}>{s.change24h}%</td>
+                  <td><MiniTrend isUp={s._chg >= 0} /></td>
+                  <td className="negative" style={{ fontWeight: 700 }}>{s._chg}%</td>
                 </tr>
               ))}
             </tbody>

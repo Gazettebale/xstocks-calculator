@@ -151,8 +151,59 @@ export async function fetchPythPrices(feedIds) {
 }
 
 /**
+ * Fetch Pyth prices as of a past Unix timestamp (Hermes historical endpoint).
+ * Used to compute a real 24h change. Returns {} on failure (best-effort).
+ */
+const PAST_CACHE_KEY = 'pyth_24h_v1'
+const PAST_CACHE_TTL = 30 * 60 * 1000 // 24h-ago price moves slowly → refresh every 30 min
+
+export async function fetchPythPricesAt(feedIds, ts) {
+  if (!feedIds?.length) return {}
+  const ids = [...new Set(feedIds)]
+
+  // Serve from cache when fresh and it already covers every requested feed
+  let cached = {}
+  try {
+    const raw = localStorage.getItem(PAST_CACHE_KEY)
+    if (raw) {
+      const { time, data } = JSON.parse(raw)
+      if (Date.now() - time < PAST_CACHE_TTL) {
+        if (ids.every(id => data[id] !== undefined)) return data
+        cached = data
+      }
+    }
+  } catch {}
+
+  const out = { ...cached }
+  // Hermes 404s the WHOLE request if any requested feed lacks data at `ts`. We
+  // chunk SEQUENTIALLY (no parallel fan-out → no rate-limit flood). A chunk that
+  // 404s gets one sequential split into halves; halves that still fail are skipped
+  // (those feeds simply have no clean 24h-ago price → "—" in the UI).
+  async function tryBatch(batch, allowSplit) {
+    if (!batch.length) return
+    const params = batch.map(id => `ids[]=${id}`).join('&')
+    try {
+      const res = await fetch(`${HERMES_URL}/updates/price/${ts}?${params}&parsed=true`)
+      if (res.ok) {
+        const json = await res.json()
+        for (const item of json.parsed ?? []) out[item.id] = item.price
+        return
+      }
+    } catch { /* network/throttle — give up on this batch */ return }
+    if (allowSplit && batch.length > 1) {
+      const mid = Math.floor(batch.length / 2)
+      await tryBatch(batch.slice(0, mid), false)
+      await tryBatch(batch.slice(mid), false)
+    }
+  }
+  for (let i = 0; i < ids.length; i += 25) await tryBatch(ids.slice(i, i + 25), true)
+  try { localStorage.setItem(PAST_CACHE_KEY, JSON.stringify({ time: Date.now(), data: out })) } catch {}
+  return out
+}
+
+/**
  * Main function: fetch live prices for all xStocks
- * Returns: { xSymbol: { price, change24h?, isLive, publishTime } }
+ * Returns: { xSymbol: { price, change24h, isLive, publishTime } }
  */
 export async function fetchXStockLivePrices(xStocksSymbols) {
   // Resolve underlying ticker from the data (suffix symbols, e.g. AAPLx → AAPL)
@@ -169,7 +220,13 @@ export async function fetchXStockLivePrices(xStocksSymbols) {
 
   if (!entries.length) return {}
 
-  const priceData = await fetchPythPrices(entries.map(e => e.feedId))
+  const feedIdList = entries.map(e => e.feedId)
+  // Current + ~24h-ago prices in parallel (24h-ago is best-effort for the change)
+  const ts24h = Math.floor(Date.now() / 1000) - 86400
+  const [priceData, pastData] = await Promise.all([
+    fetchPythPrices(feedIdList),
+    fetchPythPricesAt(feedIdList, ts24h).catch(() => ({})), // never break current prices
+  ])
   const result = {}
 
   for (const { xSym, feedId } of entries) {
@@ -177,8 +234,15 @@ export async function fetchXStockLivePrices(xStocksSymbols) {
     if (!raw) continue
     const price = parsePythPrice(raw)
     const stale = isPriceStale(raw.publish_time)
+    // Real 24h change vs the price 24h ago (null when no historical data)
+    let change24h = null
+    const past = pastData[feedId]
+    if (past) {
+      const pastPrice = parsePythPrice(past)
+      if (pastPrice > 0) change24h = parseFloat((((price - pastPrice) / pastPrice) * 100).toFixed(2))
+    }
     if (price > 0) {
-      result[xSym] = { price: parseFloat(price.toFixed(2)), isLive: !stale, publishTime: raw.publish_time }
+      result[xSym] = { price: parseFloat(price.toFixed(2)), isLive: !stale, publishTime: raw.publish_time, change24h }
     }
   }
   return result

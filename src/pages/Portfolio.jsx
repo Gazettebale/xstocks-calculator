@@ -757,6 +757,7 @@ export default function Portfolio() {
                     if (!s) return null
                     const wlPrice = livePrices[sym]?.price || s.price
                     const isLive = !!livePrices[sym]?.price
+                    const wlChg = livePrices[sym]?.change24h ?? (s.change24h || null)
                     return (
                       <tr key={sym}>
                         <td>
@@ -778,8 +779,8 @@ export default function Portfolio() {
                             )}
                           </div>
                         </td>
-                        <td style={{ color: s.change24h >= 0 ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                          {s.change24h ? `${s.change24h >= 0 ? '▲' : '▼'} ${Math.abs(s.change24h)}%` : '—'}
+                        <td style={{ color: (wlChg ?? 0) >= 0 ? '#4ade80' : '#f87171', fontWeight: 600 }}>
+                          {wlChg != null ? `${wlChg >= 0 ? '▲' : '▼'} ${Math.abs(wlChg)}%` : '—'}
                         </td>
                         <td style={{ fontSize: 12, color: 'var(--text-3)' }}>
                           {(() => { const r = range52w(s); return `$${r.low.toFixed(0)} — $${r.high.toFixed(0)}` })()}

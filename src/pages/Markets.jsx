@@ -80,7 +80,8 @@ function StockModal({ stock, liveData, onClose }) {
   const displayPrice = liveData?.price ?? stock.price
   const isLive = liveData?.isLive ?? false
 
-  const isUp = stock.change24h >= 0
+  const chg = liveData?.change24h ?? (stock.change24h || null)
+  const isUp = (chg ?? 0) >= 0
   const r = range52w(stock)
   const rangePos = Math.min(Math.max(((displayPrice - r.low) / (r.high - r.low)) * 100, 2), 98)
 
@@ -106,9 +107,9 @@ function StockModal({ stock, liveData, onClose }) {
           <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.04em' }}>
             ${displayPrice >= 1000 ? displayPrice.toLocaleString() : displayPrice.toFixed(2)}
           </div>
-          {stock.change24h ? (
+          {chg != null ? (
             <span className={`badge ${isUp ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 13 }}>
-              {isUp ? '+' : ''}{stock.change24h}% 24h
+              {isUp ? '+' : ''}{chg}% 24h
             </span>
           ) : null}
           <span className={`badge ${stock.status === 'live' ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: 11 }}>
@@ -340,7 +341,8 @@ export default function Markets() {
               const displayPrice = liveEntry?.price ?? stock.price
               const r = range52w(stock)
               const rangePos = Math.min(Math.max(((displayPrice - r.low) / (r.high - r.low)) * 100, 2), 98)
-              const isUp = stock.change24h >= 0
+              const chg = liveEntry?.change24h ?? (stock.change24h || null)
+              const isUp = (chg ?? 0) >= 0
               const hasLive = Boolean(liveEntry?.isLive)
               return (
                 <tr key={stock.symbol} style={{ cursor: 'pointer' }} onClick={() => setSelected(stock)}>
@@ -364,9 +366,9 @@ export default function Markets() {
                     </div>
                   </td>
                   <td>
-                    {stock.change24h ? (
+                    {chg != null ? (
                       <span className={isUp ? 'positive' : 'negative'} style={{ fontWeight: 700, fontSize: 13.5 }}>
-                        {isUp ? '+' : ''}{stock.change24h}%
+                        {isUp ? '+' : ''}{chg}%
                       </span>
                     ) : (
                       <span style={{ color: 'var(--text-3)', fontSize: 13.5 }}>—</span>
