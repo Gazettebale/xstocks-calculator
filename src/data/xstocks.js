@@ -1882,16 +1882,11 @@ const TV_SYMBOL_OVERRIDES = {
   'SGOV': 'AMEX:SGOV', 'JPST': 'AMEX:JPST', 'TSM': 'NYSE:TSM', 'ASML': 'NASDAQ:ASML',
   'AZN': 'NASDAQ:AZN', 'NVO': 'NYSE:NVO',
 }
-const NYSE_TICKERS = new Set([
-  'JPM','BAC','V','MA','GS','PYPL','JNJ','PFE','LLY','UNH','ABBV','ABT','MRK','DHR','TMO','MDT',
-  'WMT','MCD','HD','KO','PEP','PG','PM','XOM','CVX','LNG','CEG','GEV','ETN','HON','LIN','PWR',
-  'ACN','IBM','ORCL','CRM','NET','PANW','UBER','WBD','CMCSA','HOOD','COIN','GLXY','CRCL','HIMS',
-  'OPEN','SPCE','RCAT','USAR','BRK.B','SMR','OKLO','VRT','ANET','DELL','SMCI',
-])
 export function getTvSymbol(stock) {
-  if (TV_SYMBOL_OVERRIDES[stock.underlying]) return TV_SYMBOL_OVERRIDES[stock.underlying]
-  const exchange = NYSE_TICKERS.has(stock.underlying) ? 'NYSE' : 'NASDAQ'
-  return `${exchange}:${stock.underlying}`
+  // Use a specific override (commodities/ETFs need an exact exchange symbol);
+  // otherwise pass the bare ticker and let TradingView resolve the primary US
+  // listing itself (avoids wrongly forcing NYSE names like GME onto NASDAQ).
+  return TV_SYMBOL_OVERRIDES[stock.underlying] || stock.underlying
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
