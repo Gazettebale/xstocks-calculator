@@ -1,14 +1,25 @@
 import { useMemo, useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
-import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT } from '../data/xstocks'
+import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, STOCKS_BY_SYMBOL } from '../data/xstocks'
 import { PROTOCOLS, SOLANA_PROTOCOLS, TOTAL_TVL } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
-import { useLivePrices } from '../hooks/useLiveData'
+import useWalletStore from '../store/walletStore'
+import { useLivePrices, useLiveTVLs } from '../hooks/useLiveData'
 import TradingViewChart from '../components/TradingViewChart'
 import WalletConnect from '../components/WalletConnect'
 import StockLogo from '../components/StockLogo'
 
 const SECTOR_COLORS = ['#00c896','#14f195','#f59e0b','#ec4899','#06b6d4','#a855f7','#f43f5e','#10b981']
+
+// Macro / index charts (rendered via TradingView, no Pyth feed needed)
+const MACRO_CHARTS = [
+  { id: 'macro:total_crypto', label: '🌐 Total Crypto', tv: 'CRYPTOCAP:TOTAL' },
+  { id: 'macro:btc',          label: '₿ Bitcoin',        tv: 'BINANCE:BTCUSDT' },
+  { id: 'macro:sol',          label: '◎ Solana',         tv: 'BINANCE:SOLUSDT' },
+  { id: 'macro:gold',         label: '🥇 Or',             tv: 'TVC:GOLD' },
+  { id: 'macro:ndx',          label: '📈 Nasdaq 100',     tv: 'NASDAQ:NDX' },
+  { id: 'macro:dji',          label: '🏛️ Dow Jones',      tv: 'DJ:DJI' },
+]
 
 // ETF holdings info
 const ETF_INFO = {
@@ -38,58 +49,76 @@ function MiniTrend({ isUp }) {
 
 export default function Dashboard({ setPage }) {
   const positions = usePortfolioStore(s => s.positions)
-
-  const currentPrices = useMemo(() => {
-    const m = {}
-    XSTOCKS_LIST.forEach(x => { m[x.symbol] = x.price })
-    return m
-  }, [])
-
-  const totalPortfolioValue = useMemo(() =>
-    positions.reduce((s, p) => s + (currentPrices[p.symbol] || p.entryPrice) * p.quantity, 0),
-    [positions, currentPrices]
-  )
-
-  const totalPnL = useMemo(() =>
-    positions.reduce((s, p) => {
-      const cp = currentPrices[p.symbol] || p.entryPrice
-      return s + (cp - p.entryPrice) * p.quantity
-    }, 0),
-    [positions, currentPrices]
-  )
+  const watchlist = usePortfolioStore(s => s.watchlist)
+  const walletHoldings = useWalletStore(s => s.holdings)
+  const [expandedSector, setExpandedSector] = useState(null)
+  const [chartKey, setChartKey] = useState('SPYx')
 
   const liveStocks = useMemo(() => XSTOCKS_LIST.filter(x => x.status === 'live'), [])
   const liveSymbols = useMemo(() => liveStocks.map(s => s.symbol), [liveStocks])
-  const activeAirdrops = PROTOCOLS.filter(p => p.airdrop?.active)
-  const [expandedSector, setExpandedSector] = useState(null)
+
+  // Live prices (Pyth) + protocol TVL (DeFiLlama)
+  const { prices: livePrices } = useLivePrices(liveSymbols)
+  const { tvls } = useLiveTVLs()
+
+  // Real protocol TVL — sum of live DeFiLlama TVLs for the SOLANA protocols only
+  // (excludes Hyperliquid L1 and points programs). Fallback to the static estimate.
+  const solanaIds = useMemo(() => new Set(SOLANA_PROTOCOLS.filter(p => !p.isPointsProgram).map(p => p.id)), [])
+  const liveTVL = useMemo(() => {
+    const sum = Object.entries(tvls).filter(([id]) => solanaIds.has(id)).reduce((s, [, v]) => s + (v || 0), 0)
+    return sum > 0 ? sum : TOTAL_TVL * 1e6
+  }, [tvls, solanaIds])
+
+  // Live price per symbol (Pyth, fallback to baseline)
+  const currentPrices = useMemo(() => {
+    const m = {}
+    XSTOCKS_LIST.forEach(x => { m[x.symbol] = livePrices[x.symbol]?.price || x.price })
+    return m
+  }, [livePrices])
+
+  // Mon Portfolio = on-chain wallet holdings + manual positions (held elsewhere)
+  const walletValue = useMemo(() =>
+    walletHoldings.reduce((s, h) => s + h.qty * (currentPrices[h.stock.symbol] || h.stock.price), 0),
+    [walletHoldings, currentPrices])
+  const positionsValue = useMemo(() =>
+    positions.reduce((s, p) => s + (currentPrices[p.symbol] || p.entryPrice) * p.quantity, 0),
+    [positions, currentPrices])
+  const totalPortfolioValue = walletValue + positionsValue
+  // PnL only where there is a cost basis (manual positions with an entry price)
+  const totalPnL = useMemo(() =>
+    positions.reduce((s, p) => s + ((currentPrices[p.symbol] || p.entryPrice) - p.entryPrice) * p.quantity, 0),
+    [positions, currentPrices])
 
   const sectorData = useMemo(() => {
     const map = {}
     liveStocks.forEach(s => { map[s.sector] = (map[s.sector] || 0) + 1 })
     return Object.entries(map).map(([name, value]) => ({
-      name: name.split(' ')[0],
-      fullName: name,
-      value,
+      name: name.split(' ')[0], fullName: name, value,
       stocks: liveStocks.filter(x => x.sector === name),
     }))
-  }, [])
+  }, [liveStocks])
 
-  const spy = XSTOCKS_LIST.find(x => x.symbol === 'SPYx') ?? XSTOCKS_LIST[0]
-
-  // Live prices + real 24h change from Pyth for all live xStocks
-  const { prices: livePrices, marketOpen, lastUpdate: liveTs } = useLivePrices(liveSymbols)
-  const liveSpyEntry = livePrices['SPYx']
-  const liveSpyPrice = liveSpyEntry?.price
-  const spyChg = liveSpyEntry?.change24h ?? (spy?.change24h || null)
-  const marketTrend = (spyChg ?? 0) >= 0
-
-  // Real 24h change drives gainers/losers (fallback to static until prices load)
+  // Top gainers/losers — REAL live 24h change only (no stale fallback)
   const ranked = useMemo(() => liveStocks
-    .map(s => ({ s, c: livePrices[s.symbol]?.change24h ?? (s.change24h ?? null) }))
-    .filter(x => x.c != null && x.c !== 0), [livePrices, liveStocks])
+    .map(s => ({ s, c: livePrices[s.symbol]?.change24h }))
+    .filter(x => x.c != null), [livePrices, liveStocks])
   const topGainers = [...ranked].sort((a, b) => b.c - a.c).slice(0, 4).map(x => ({ ...x.s, _chg: x.c }))
   const topLosers = [...ranked].sort((a, b) => a.c - b.c).slice(0, 3).map(x => ({ ...x.s, _chg: x.c }))
-  const spyIsLive    = liveSpyEntry?.isLive ?? false
+
+  // Chart picker: favorites (watchlist + wallet) + macro + all xStocks
+  const favSymbols = useMemo(() => {
+    const set = new Set([...watchlist, ...walletHoldings.map(h => h.stock.symbol)])
+    return [...set].filter(s => STOCKS_BY_SYMBOL[s])
+  }, [watchlist, walletHoldings])
+  const spy = STOCKS_BY_SYMBOL['SPYx'] ?? XSTOCKS_LIST[0]
+  const chartView = useMemo(() => {
+    if (chartKey.startsWith('macro:')) {
+      const m = MACRO_CHARTS.find(x => x.id === chartKey) || MACRO_CHARTS[0]
+      return { isMacro: true, label: m.label, tv: m.tv }
+    }
+    const stock = STOCKS_BY_SYMBOL[chartKey] || spy
+    return { isMacro: false, stock, tv: getTvSymbol(stock), live: livePrices[stock.symbol] }
+  }, [chartKey, livePrices, spy])
 
   return (
     <div className="page-wrapper">
@@ -116,13 +145,16 @@ export default function Dashboard({ setPage }) {
       <WalletConnect />
 
       {/* ── Hero Stats ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
         {[
           { label: 'xStocks Live', value: LIVE_COUNT, sub: `+${COMING_SOON_COUNT} coming soon`, color: '#4ade80', icon: '📈' },
-          { label: 'TVL Protocoles', value: `$${(TOTAL_TVL / 1000).toFixed(1)}B`, sub: `${SOLANA_PROTOCOLS.filter(p=>!p.isPointsProgram).length} protocoles Solana`, color: '#00e4b5', icon: '🏦' },
-          { label: 'Airdrops Actifs', value: activeAirdrops.length, sub: 'Opportunités en cours', color: '#f9a8d4', icon: '🪂' },
-          { label: 'Mon Portfolio', value: totalPortfolioValue > 0 ? `$${totalPortfolioValue.toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: positions.length > 0 ? `${positions.length} position(s)` : 'Aucune position', color: '#60a5fa', icon: '💼' },
-          { label: 'PnL Total', value: positions.length > 0 ? `${totalPnL >= 0 ? '+' : ''}$${Math.abs(totalPnL).toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: positions.length > 0 ? (totalPnL >= 0 ? '📈 En profit' : '📉 En perte') : 'Commencer à tracker', color: positions.length > 0 ? (totalPnL >= 0 ? '#4ade80' : '#f87171') : undefined, icon: totalPnL >= 0 ? '🟢' : '🔴' },
+          { label: 'TVL Protocoles', value: `$${(liveTVL / 1e9).toFixed(2)}B`, sub: `${SOLANA_PROTOCOLS.filter(p=>!p.isPointsProgram).length} protocoles · live DeFiLlama`, color: '#00e4b5', icon: '🏦' },
+          { label: 'Mon Portfolio', value: totalPortfolioValue > 0 ? `$${totalPortfolioValue.toLocaleString('en',{maximumFractionDigits:0})}` : '—',
+            sub: walletValue > 0 && positions.length > 0 ? `wallet + ${positions.length} manuelle(s)`
+               : walletValue > 0 ? `${walletHoldings.length} xStocks on-chain`
+               : positions.length > 0 ? `${positions.length} position(s)` : 'Connecte ton wallet',
+            color: '#60a5fa', icon: '💼' },
+          { label: 'PnL Total', value: positions.length > 0 ? `${totalPnL >= 0 ? '+' : ''}$${Math.abs(totalPnL).toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: positions.length > 0 ? (totalPnL >= 0 ? '📈 sur positions trackées' : '📉 sur positions trackées') : 'Prix d\'entrée requis', color: positions.length > 0 ? (totalPnL >= 0 ? '#4ade80' : '#f87171') : undefined, icon: totalPnL >= 0 ? '🟢' : '🔴' },
         ].map(s => (
           <div key={s.label} className="stat-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -171,36 +203,55 @@ export default function Dashboard({ setPage }) {
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 20 }}>
         {/* S&P Chart — TradingView */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '14px 18px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '14px 18px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>SPYx — S&P 500</div>
-                <span style={{ fontSize: 10, color: spyIsLive ? '#10b981' : '#94a3b8', fontWeight: 800 }}>
-                  {spyIsLive ? '⚡ Pyth Live' : '◌ Indicatif'}
-                </span>
-              </div>
-              <div style={{ color: 'var(--text-2)', fontSize: 13, marginTop: 2 }}>
-                <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: 20 }}>
-                  ${(liveSpyPrice ?? spy.price).toLocaleString()}
-                </span>
-                {spyChg != null && (
-                  <span style={{ marginLeft: 10, fontWeight: 600, color: marketTrend ? '#4ade80' : '#f87171' }}>
-                    {marketTrend ? '+' : ''}{spyChg}% 24h
-                  </span>
-                )}
-              </div>
+              {chartView.isMacro ? (
+                <>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{chartView.label}</div>
+                  <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 4 }}>Indice macro · via TradingView</div>
+                </>
+              ) : (() => {
+                const c = chartView.live?.change24h ?? (chartView.stock.change24h || null)
+                const up = (c ?? 0) >= 0
+                const isLive = chartView.live?.isLive
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15 }}>{chartView.stock.symbol} — {chartView.stock.name}</div>
+                      <span style={{ fontSize: 10, color: isLive ? '#10b981' : '#94a3b8', fontWeight: 800 }}>
+                        {isLive ? '⚡ Pyth Live' : '◌ Indicatif'}
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text-2)', fontSize: 13, marginTop: 2 }}>
+                      <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: 20 }}>
+                        ${(chartView.live?.price ?? chartView.stock.price).toLocaleString()}
+                      </span>
+                      {c != null && (
+                        <span style={{ marginLeft: 10, fontWeight: 600, color: up ? '#4ade80' : '#f87171' }}>
+                          {up ? '+' : ''}{c}% 24h
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )
+              })()}
             </div>
-            <span className={`badge ${marketTrend ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 10 }}>
-              {marketTrend ? '▲ Bullish' : '▼ Bearish'}
-            </span>
+            <select value={chartKey} onChange={e => setChartKey(e.target.value)}
+              style={{ background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', fontSize: 12.5, fontWeight: 600, maxWidth: 230, cursor: 'pointer' }}>
+              {favSymbols.length > 0 && (
+                <optgroup label="⭐ Mes favoris">
+                  {favSymbols.map(s => <option key={s} value={s}>{s} · {STOCKS_BY_SYMBOL[s].name}</option>)}
+                </optgroup>
+              )}
+              <optgroup label="📊 Macro / Indices">
+                {MACRO_CHARTS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </optgroup>
+              <optgroup label="🔎 Tous les xStocks">
+                {liveStocks.map(s => <option key={s.symbol} value={s.symbol}>{s.symbol} · {s.name}</option>)}
+              </optgroup>
+            </select>
           </div>
-          <TradingViewChart
-            symbol="AMEX:SPY"
-            height={300}
-            interval="D"
-            showToolbar={true}
-            showDrawingTools={false}
-          />
+          <TradingViewChart key={chartView.tv} symbol={chartView.tv} height={300} interval="D" showToolbar showDrawingTools={false} />
         </div>
 
         {/* Sectors — avec détail des actions */}
