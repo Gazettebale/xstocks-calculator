@@ -88,9 +88,9 @@ export default function Dashboard({ setPage }) {
     const last = xstocksHist.length - 1
     const cur = xstocksHist[last].tvl
     const at = (d) => xstocksHist[Math.max(0, last - d)]?.tvl  // history is daily
-    const d1 = at(1), d30 = at(30)
+    const d7 = at(7), d30 = at(30)
     return {
-      chg24h: d1 ? (cur / d1 - 1) * 100 : null,
+      chg7d: d7 ? (cur / d7 - 1) * 100 : null,
       chg30d: d30 ? (cur / d30 - 1) * 100 : null,
     }
   }, [xstocksHist])
@@ -182,9 +182,9 @@ export default function Dashboard({ setPage }) {
                     {tvlTrend.chg30d >= 0 ? '↑' : '↓'}{Math.abs(tvlTrend.chg30d).toFixed(1)}% 30j
                   </span>
                 )}
-                {tvlTrend.chg24h != null && (
-                  <span style={{ marginLeft: 8, color: 'var(--text-3)' }}>
-                    {tvlTrend.chg24h >= 0 ? '+' : ''}{tvlTrend.chg24h.toFixed(1)}% 24h
+                {tvlTrend.chg7d != null && (
+                  <span style={{ marginLeft: 8, color: tvlTrend.chg7d >= 0 ? '#4ade80' : '#f87171' }}>
+                    {tvlTrend.chg7d >= 0 ? '↑' : '↓'}{Math.abs(tvlTrend.chg7d).toFixed(1)}% 7j
                   </span>
                 )}
               </span>
@@ -197,17 +197,15 @@ export default function Dashboard({ setPage }) {
             color: '#60a5fa', icon: '💼' },
           { label: 'PnL Total', value: positions.length > 0 ? `${totalPnL >= 0 ? '+' : ''}$${Math.abs(totalPnL).toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: positions.length > 0 ? (totalPnL >= 0 ? '📈 sur positions trackées' : '📉 sur positions trackées') : 'Prix d\'entrée requis', color: positions.length > 0 ? (totalPnL >= 0 ? '#4ade80' : '#f87171') : undefined, icon: totalPnL >= 0 ? '🟢' : '🔴' },
         ].map(s => (
-          <div key={s.label} className="stat-card" style={{ position: 'relative', overflow: 'hidden' }}>
-            <div style={{ position: 'relative', zIndex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div className="stat-label">{s.label}</div>
-                <span style={{ fontSize: 18 }}>{s.icon}</span>
-              </div>
-              <div className="stat-value" style={{ color: s.color || 'var(--text)', marginTop: 10 }}>{s.value}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>{s.sub}</div>
+          <div key={s.label} className="stat-card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="stat-label">{s.label}</div>
+              <span style={{ fontSize: 18 }}>{s.icon}</span>
             </div>
+            <div className="stat-value" style={{ color: s.color || 'var(--text)', marginTop: 10 }}>{s.value}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>{s.sub}</div>
             {s.chart && (
-              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 36, opacity: 0.85, pointerEvents: 'none', zIndex: 0 }}>
+              <div style={{ height: 38, marginTop: 'auto', paddingTop: 12, marginLeft: -4, marginRight: -4, marginBottom: -4 }}>
                 {s.chart}
               </div>
             )}
