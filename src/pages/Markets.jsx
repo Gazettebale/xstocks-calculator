@@ -99,7 +99,14 @@ function StockModal({ stock, liveData, onClose }) {
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="btn-ghost" style={{ fontSize: 18, padding: '2px 8px' }}>✕</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className={inWatchlist ? 'btn-danger' : 'btn-primary'}
+              onClick={() => inWatchlist ? removeFromWatchlist(stock.symbol) : addToWatchlist(stock.symbol)}
+              style={{ fontSize: 13, fontWeight: 700, padding: '7px 14px', whiteSpace: 'nowrap' }}>
+              {inWatchlist ? '★ Retirer Watchlist' : '☆ Ajouter Watchlist'}
+            </button>
+            <button onClick={onClose} className="btn-ghost" style={{ fontSize: 18, padding: '2px 8px' }}>✕</button>
+          </div>
         </div>
 
         {/* Price Row */}
@@ -216,11 +223,7 @@ function StockModal({ stock, liveData, onClose }) {
         )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button className={inWatchlist ? 'btn-danger' : 'btn-primary'}
-            onClick={() => inWatchlist ? removeFromWatchlist(stock.symbol) : addToWatchlist(stock.symbol)}>
-            {inWatchlist ? '★ Retirer Watchlist' : '☆ Ajouter Watchlist'}
-          </button>
-          <button className="btn-secondary" onClick={onClose}>Fermer</button>
+          <button className="btn-secondary" onClick={onClose} style={{ flex: 1 }}>Fermer</button>
         </div>
       </div>
     </div>
