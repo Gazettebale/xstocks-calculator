@@ -154,7 +154,7 @@ export async function fetchPythPrices(feedIds) {
  * Fetch Pyth prices as of a past Unix timestamp (Hermes historical endpoint).
  * Used to compute a real 24h change. Returns {} on failure (best-effort).
  */
-const PAST_CACHE_KEY = 'pyth_24h_v1'
+const PAST_CACHE_KEY = 'pyth_24h_v2'
 const PAST_CACHE_TTL = 30 * 60 * 1000 // 24h-ago price moves slowly → refresh every 30 min
 
 export async function fetchPythPricesAt(feedIds, ts) {
@@ -179,7 +179,9 @@ export async function fetchPythPricesAt(feedIds, ts) {
   // chunk SEQUENTIALLY (no parallel fan-out → no rate-limit flood). A chunk that
   // 404s gets one sequential split into halves; halves that still fail are skipped
   // (those feeds simply have no clean 24h-ago price → "—" in the UI).
-  async function tryBatch(batch, allowSplit) {
+  // Recursive binary split, fully SEQUENTIAL (one request at a time → no flood).
+  // Isolates exactly the feeds with no 24h history so every covered feed is kept.
+  async function tryBatch(batch) {
     if (!batch.length) return
     const params = batch.map(id => `ids[]=${id}`).join('&')
     try {
@@ -189,14 +191,13 @@ export async function fetchPythPricesAt(feedIds, ts) {
         for (const item of json.parsed ?? []) out[item.id] = item.price
         return
       }
-    } catch { /* network/throttle — give up on this batch */ return }
-    if (allowSplit && batch.length > 1) {
-      const mid = Math.floor(batch.length / 2)
-      await tryBatch(batch.slice(0, mid), false)
-      await tryBatch(batch.slice(mid), false)
-    }
+    } catch { return } // network/throttle — give up on this branch
+    if (batch.length === 1) return // this feed genuinely has no 24h-ago price
+    const mid = Math.floor(batch.length / 2)
+    await tryBatch(batch.slice(0, mid))
+    await tryBatch(batch.slice(mid))
   }
-  for (let i = 0; i < ids.length; i += 25) await tryBatch(ids.slice(i, i + 25), true)
+  for (let i = 0; i < ids.length; i += 25) await tryBatch(ids.slice(i, i + 25))
   try { localStorage.setItem(PAST_CACHE_KEY, JSON.stringify({ time: Date.now(), data: out })) } catch {}
   return out
 }
