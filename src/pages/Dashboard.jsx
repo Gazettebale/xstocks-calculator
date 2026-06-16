@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, STOCKS_BY_SYMBOL } from '../data/xstocks'
 import { PROTOCOLS, SOLANA_PROTOCOLS } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
@@ -20,6 +20,24 @@ const MACRO_CHARTS = [
   { id: 'macro:ndx',          label: '📈 Nasdaq 100',     tv: 'NASDAQ:NDX' },
   { id: 'macro:dji',          label: '🏛️ Dow Jones',      tv: 'DJ:DJI' },
 ]
+
+// Subtle TVL adoption curve drawn at the bottom of the TVL card
+function TVLSparkline({ data }) {
+  if (!data?.length) return null
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+        <defs>
+          <linearGradient id="tvl-spark" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#00e4b5" stopOpacity={0.45} />
+            <stop offset="100%" stopColor="#00e4b5" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <Area type="monotone" dataKey="tvl" stroke="#00e4b5" strokeWidth={1.5} fill="url(#tvl-spark)" dot={false} isAnimationActive={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+  )
+}
 
 // ETF holdings info
 const ETF_INFO = {
@@ -171,7 +189,7 @@ export default function Dashboard({ setPage }) {
                 )}
               </span>
             ) : 'valeur tokenisée · live DeFiLlama',
-            color: '#00e4b5', icon: '🏦' },
+            color: '#00e4b5', icon: '🏦', chart: <TVLSparkline data={xstocksHist} /> },
           { label: 'Mon Portfolio', value: totalPortfolioValue > 0 ? `$${totalPortfolioValue.toLocaleString('en',{maximumFractionDigits:0})}` : '—',
             sub: walletValue > 0 && positions.length > 0 ? `wallet + ${positions.length} manuelle(s)`
                : walletValue > 0 ? `${walletHoldings.length} xStocks on-chain`
@@ -179,13 +197,20 @@ export default function Dashboard({ setPage }) {
             color: '#60a5fa', icon: '💼' },
           { label: 'PnL Total', value: positions.length > 0 ? `${totalPnL >= 0 ? '+' : ''}$${Math.abs(totalPnL).toLocaleString('en',{maximumFractionDigits:0})}` : '—', sub: positions.length > 0 ? (totalPnL >= 0 ? '📈 sur positions trackées' : '📉 sur positions trackées') : 'Prix d\'entrée requis', color: positions.length > 0 ? (totalPnL >= 0 ? '#4ade80' : '#f87171') : undefined, icon: totalPnL >= 0 ? '🟢' : '🔴' },
         ].map(s => (
-          <div key={s.label} className="stat-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div className="stat-label">{s.label}</div>
-              <span style={{ fontSize: 18 }}>{s.icon}</span>
+          <div key={s.label} className="stat-card" style={{ position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div className="stat-label">{s.label}</div>
+                <span style={{ fontSize: 18 }}>{s.icon}</span>
+              </div>
+              <div className="stat-value" style={{ color: s.color || 'var(--text)', marginTop: 10 }}>{s.value}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>{s.sub}</div>
             </div>
-            <div className="stat-value" style={{ color: s.color || 'var(--text)', marginTop: 10 }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>{s.sub}</div>
+            {s.chart && (
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 36, opacity: 0.85, pointerEvents: 'none', zIndex: 0 }}>
+                {s.chart}
+              </div>
+            )}
           </div>
         ))}
       </div>
