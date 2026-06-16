@@ -212,7 +212,7 @@ export default function Dashboard({ setPage }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 6 }}>
             {sectorData.map((s, i) => {
               const isExpanded = expandedSector === s.fullName
-              const isETF = s.fullName === 'ETFs & Indices'
+              const isETF = s.fullName === 'ETF & Indices'
               const color = SECTOR_COLORS[i % SECTOR_COLORS.length]
               return (
                 <div key={s.name}>

@@ -9,6 +9,49 @@ import { AreaChart, Area, ResponsiveContainer } from 'recharts'
 // Symbols to fetch live prices for (only live xStocks)
 const LIVE_SYMBOLS = XSTOCKS_LIST.filter(x => x.status === 'live').map(x => x.symbol)
 
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+const jupSwap = (mint) => `https://jup.ag/swap/USDC-${mint}`
+const raySwap = (mint) => `https://raydium.io/swap/?inputMint=${USDC_MINT}&outputMint=${mint}`
+
+// Copyable contract address (mint) — full bar for the modal, icon-only when compact
+function CopyCA({ mint, compact = false }) {
+  const [copied, setCopied] = useState(false)
+  const copy = (e) => {
+    e?.stopPropagation?.()
+    navigator.clipboard?.writeText(mint).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 1300)
+    })
+  }
+  if (compact) {
+    return (
+      <button onClick={copy} title="Copier le contract address (CA)"
+        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', borderRadius: 5,
+          cursor: 'pointer', color: copied ? '#10b981' : 'var(--text-3)', fontSize: 11, padding: '1px 6px', lineHeight: 1.4 }}>
+        {copied ? '✓' : '⧉'}
+      </button>
+    )
+  }
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+        Contract Address (mint Solana)
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <code onClick={copy} title="Cliquer pour copier" style={{
+          flex: 1, minWidth: 220, fontSize: 12.5, color: 'var(--text-2)', cursor: 'pointer',
+          background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 12px',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{mint}</code>
+        <button onClick={copy} className="btn-secondary" style={{ padding: '8px 14px', fontSize: 12.5, fontWeight: 700, color: copied ? '#10b981' : undefined }}>
+          {copied ? '✓ Copié' : '⧉ Copier'}
+        </button>
+        <a href={jupSwap(mint)} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ padding: '8px 14px', fontSize: 12.5, fontWeight: 700, textDecoration: 'none' }}>🪐 Jupiter</a>
+        <a href={raySwap(mint)} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ padding: '8px 14px', fontSize: 12.5, fontWeight: 700, textDecoration: 'none' }}>⚡ Raydium</a>
+      </div>
+    </div>
+  )
+}
+
 function Sparkline({ stock }) {
   const data = useMemo(() => generateHistoricalData(stock, 14), [stock.symbol])
   const color = stock.change24h >= 0 ? '#22c55e' : '#ef4444'
@@ -76,6 +119,9 @@ function StockModal({ stock, liveData, onClose }) {
             </span>
           )}
         </div>
+
+        {/* Contract address (copy + direct swap links) */}
+        <CopyCA mint={stock.mint} />
 
         {/* TradingView Chart — Full interactive with indicators, drawing tools */}
         <div style={{ marginBottom: 18 }}>
@@ -304,6 +350,7 @@ export default function Markets() {
                         <div style={{ fontWeight: 700, fontSize: 13.5, display: 'flex', alignItems: 'center', gap: 6 }}>
                           {stock.symbol}
                           {watchlist.includes(stock.symbol) && <span style={{ color: '#f59e0b', fontSize: 12 }}>★</span>}
+                          <CopyCA mint={stock.mint} compact />
                         </div>
                         <div style={{ fontSize: 11.5, color: 'var(--text-3)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.name}</div>
                       </div>

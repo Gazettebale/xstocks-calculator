@@ -374,9 +374,10 @@ function WalletTab({ currentPrices }) {
           {imported ? '✓ Importé dans Positions' : '↓ Importer comme positions'}
         </button>
       </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12 }}>
-        Les quantités sont lues on-chain. L'import crée des positions avec le prix actuel comme prix d'entrée —
-        ajuste-le ensuite si tu connais ton vrai prix d'entrée.
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12, lineHeight: 1.6 }}>
+        Inclut tes xStocks <strong style={{ color: 'var(--text-2)' }}>en wallet (spot)</strong> + ceux <strong style={{ color: '#00e4b5' }}>prêtés sur Kamino</strong>.
+        Pas encore comptés : les positions de <strong style={{ color: 'var(--text-2)' }}>liquidité Raydium/Orca (LP)</strong> — intégration on-chain à venir.
+        L'import crée des positions avec le prix actuel comme prix d'entrée (ajuste-le ensuite).
       </div>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <table>
@@ -393,7 +394,15 @@ function WalletTab({ currentPrices }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <span style={{ fontSize: 20 }}>{h.stock.logo}</span>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 13 }}>{h.stock.symbol}</div>
+                        <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {h.stock.symbol}
+                          {h.sources?.kamino > 0 && (
+                            <span title={`${h.sources.kamino.toLocaleString('en',{maximumFractionDigits:2})} prêtés sur Kamino`}
+                              style={{ fontSize: 9.5, fontWeight: 700, color: '#00e4b5', background: 'rgba(0,200,150,0.12)', border: '1px solid rgba(0,200,150,0.3)', borderRadius: 4, padding: '1px 5px' }}>
+                              🏦 Kamino
+                            </span>
+                          )}
+                        </div>
                         <div style={{ fontSize: 11, color: 'var(--text-3)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.stock.name}</div>
                       </div>
                     </div>

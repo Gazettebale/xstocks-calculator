@@ -81,3 +81,98 @@ export async function fetchWalletHoldings(address, rpcUrl = DEFAULT_RPC) {
   }
   return Object.values(byMint).sort((a, b) => b.qty - a.qty)
 }
+
+// ── Kamino lending positions ────────────────────────────────────────────────
+// xStocks deposited on Kamino leave the wallet, so getTokenAccountsByOwner can't
+// see them. Kamino's public API (CORS-open, no key) exposes per-wallet obligations.
+const KAMINO_API = 'https://api.kamino.finance'
+const ZERO_PUBKEY = '11111111111111111111111111111111'
+const SF_SCALE = 2 ** 60 // marketValueSf is a scaled fraction: USD = value / 2^60
+
+async function kFetch(path) {
+  const r = await fetch(`${KAMINO_API}${path}`)
+  if (!r.ok) throw new Error(`Kamino ${r.status}`)
+  return r.json()
+}
+
+export async function fetchKaminoHoldings(address) {
+  let markets
+  try { markets = await kFetch('/v2/kamino-market') } catch { return [] }
+  const marketAddrs = markets.map(m => m.lendingMarket).filter(Boolean)
+
+  // Per-market obligations for this wallet (parallel, tolerate per-market failure)
+  const perMarket = await Promise.allSettled(
+    marketAddrs.map(async (m) => ({
+      market: m,
+      obligations: await kFetch(`/kamino-market/${m}/users/${address}/obligations`).catch(() => []),
+    }))
+  )
+
+  // Collect non-zero collateral deposits (reserve + USD scaled-fraction)
+  const hits = []
+  for (const res of perMarket) {
+    if (res.status !== 'fulfilled') continue
+    const { market, obligations } = res.value
+    if (!Array.isArray(obligations)) continue
+    for (const ob of obligations) {
+      for (const d of ob?.state?.deposits || []) {
+        if (!d?.depositReserve || d.depositReserve === ZERO_PUBKEY) continue
+        if (!d.marketValueSf || d.marketValueSf === '0') continue
+        hits.push({ market, reserve: d.depositReserve, mvSf: d.marketValueSf })
+      }
+    }
+  }
+  if (!hits.length) return []
+
+  // reserve → underlying mint (only fetch metrics for markets that have hits)
+  const reserveToMint = {}
+  await Promise.allSettled([...new Set(hits.map(h => h.market))].map(async (m) => {
+    const reserves = await kFetch(`/kamino-market/${m}/reserves/metrics`).catch(() => [])
+    for (const r of reserves) reserveToMint[r.reserve] = r.liquidityTokenMint
+  }))
+
+  // mint → USD price (to convert USD value back to an underlying token quantity)
+  const priceByMint = {}
+  try {
+    for (const p of await kFetch('/prices?source=scope')) priceByMint[p.mint] = parseFloat(p.usdPrice)
+  } catch { /* fall back to static price below */ }
+
+  const out = []
+  for (const h of hits) {
+    const mint = reserveToMint[h.reserve]
+    const stock = mint && STOCKS_BY_MINT[mint]
+    if (!stock) continue
+    let usd = 0
+    try { usd = Number(BigInt(h.mvSf)) / SF_SCALE } catch { usd = 0 }
+    const price = priceByMint[mint] || stock.price || 0
+    const qty = price > 0 ? usd / price : 0
+    if (qty > 0) out.push({ mint, qty, stock, source: 'kamino', usd })
+  }
+  return out
+}
+
+// ── Combined: spot wallet + Kamino lending, merged per mint with source split ─
+export async function fetchAllHoldings(address, rpcUrl = DEFAULT_RPC) {
+  const addr = (address || '').trim()
+  if (!isValidSolanaAddress(addr)) throw new Error('Adresse Solana invalide')
+
+  const [spotRes, kaminoRes] = await Promise.allSettled([
+    fetchWalletHoldings(addr, rpcUrl),
+    fetchKaminoHoldings(addr),
+  ])
+  if (spotRes.status === 'rejected' && kaminoRes.status === 'rejected') {
+    throw new Error(spotRes.reason?.message || 'Lecture wallet impossible')
+  }
+  const spot = spotRes.status === 'fulfilled' ? spotRes.value : []
+  const kamino = kaminoRes.status === 'fulfilled' ? kaminoRes.value : []
+
+  const byMint = {}
+  const add = (mint, qty, stock, source) => {
+    if (!byMint[mint]) byMint[mint] = { mint, qty: 0, stock, sources: {} }
+    byMint[mint].qty += qty
+    byMint[mint].sources[source] = (byMint[mint].sources[source] || 0) + qty
+  }
+  spot.forEach(h => add(h.mint, h.qty, h.stock, 'wallet'))
+  kamino.forEach(h => add(h.mint, h.qty, h.stock, 'kamino'))
+  return Object.values(byMint).sort((a, b) => b.qty - a.qty)
+}

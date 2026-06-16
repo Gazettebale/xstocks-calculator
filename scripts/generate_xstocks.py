@@ -24,20 +24,20 @@ OUT_FILE = f"{ROOT}/src/data/xstocks.js"
 
 # ── Category taxonomy (underlying -> sector) ────────────────────────────────
 SECTORS = {
-    "HARDWARE":   "Hardware & Semiconductors",
-    "SOFTWARE":   "Software & Cloud",
-    "FRONTIER":   "AI & Frontier Tech",
-    "INTERNET":   "Internet & Media",
-    "CRYPTO":     "Crypto & Digital Assets",
-    "FINANCE":    "Finance & Banking",
-    "HEALTH":     "Healthcare & Pharma",
-    "CONSUMER":   "Consumer & Retail",
-    "ENERGY":     "Energy & Nuclear",
-    "INDUSTRIAL": "Industrials",
-    "COMMODITIES":"Commodities & Metals",
-    "INDICES":    "ETFs & Indices",
-    "BONDS":      "Bonds & Income",
-    "OTHER":      "Other",
+    "HARDWARE":   "Hardware & Semi-conducteurs",
+    "SOFTWARE":   "Logiciels & Cloud",
+    "FRONTIER":   "IA & Tech de Pointe",
+    "INTERNET":   "Internet & Médias",
+    "CRYPTO":     "Crypto & Actifs Numériques",
+    "FINANCE":    "Finance & Banques",
+    "HEALTH":     "Santé & Pharma",
+    "CONSUMER":   "Consommation & Distribution",
+    "ENERGY":     "Énergie & Nucléaire",
+    "INDUSTRIAL": "Industrie",
+    "COMMODITIES":"Matières Premières & Métaux",
+    "INDICES":    "ETF & Indices",
+    "BONDS":      "Obligations & Revenu",
+    "OTHER":      "Autres",
 }
 
 SECTOR_MAP = {
@@ -343,20 +343,20 @@ function mulberry32(seed) {
 // HISTORICAL CAGR — long-term average annual returns by sub-sector
 // ─────────────────────────────────────────────────────────────────────────────
 const SECTOR_CAGR = {
-  'Hardware & Semiconductors': 0.160,
-  'Software & Cloud':          0.150,
-  'AI & Frontier Tech':        0.200,
-  'Internet & Media':          0.140,
-  'Crypto & Digital Assets':   0.220,
-  'Finance & Banking':         0.098,
-  'Healthcare & Pharma':       0.104,
-  'Consumer & Retail':         0.090,
-  'Energy & Nuclear':          0.085,
-  'Industrials':               0.094,
-  'Commodities & Metals':      0.060,
-  'ETFs & Indices':            0.105,
-  'Bonds & Income':            0.040,
-  'Other':                     0.090,
+  'Hardware & Semi-conducteurs': 0.160,
+  'Logiciels & Cloud':           0.150,
+  'IA & Tech de Pointe':         0.200,
+  'Internet & Médias':           0.140,
+  'Crypto & Actifs Numériques':  0.220,
+  'Finance & Banques':           0.098,
+  'Santé & Pharma':              0.104,
+  'Consommation & Distribution': 0.090,
+  'Énergie & Nucléaire':         0.085,
+  'Industrie':                   0.094,
+  'Matières Premières & Métaux': 0.060,
+  'ETF & Indices':               0.105,
+  'Obligations & Revenu':        0.040,
+  'Autres':                      0.090,
 }
 export function getSectorCagr(sector) { return SECTOR_CAGR[sector] ?? 0.105 }
 
