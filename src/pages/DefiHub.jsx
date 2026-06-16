@@ -5,7 +5,14 @@ import { formatTVL } from '../services/liveData'
 import { XSTOCKS_LIST } from '../data/xstocks'
 
 // Only Solana DeFi protocols (excludes Hyperliquid L1 and points-only programs)
-const DEFI_PROTOCOLS = SOLANA_PROTOCOLS.filter(p => p.solanaDefi !== false && !p.isPointsProgram)
+// Display order: Titan first (cheap swaps + referral), then Jupiter, Kamino, Raydium, Orca
+const PROTOCOL_ORDER = ['titan', 'jupiter', 'kamino', 'raydium', 'orca']
+const DEFI_PROTOCOLS = SOLANA_PROTOCOLS
+  .filter(p => p.solanaDefi !== false && !p.isPointsProgram)
+  .sort((a, b) => {
+    const ia = PROTOCOL_ORDER.indexOf(a.id), ib = PROTOCOL_ORDER.indexOf(b.id)
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+  })
 
 // ── Yield Explorer helpers ──────────────────────────────────────────────────
 
@@ -193,7 +200,7 @@ export default function DefiHub() {
   const [yieldFilter, setYieldFilter] = useState('all')
   const [yieldSearch, setYieldSearch] = useState('')
   const [minTvl, setMinTvl] = useState(10000)        // hide dust pools by default
-  const [xstocksOnly, setXstocksOnly] = useState(false)
+  const [xstocksOnly, setXstocksOnly] = useState(true)   // default to xStock pools — the relevant ones
 
   // Live data hooks
   const { tvls, tvlsFormatted, loading: tvlLoading } = useLiveTVLs()
@@ -220,7 +227,8 @@ export default function DefiHub() {
 
   // ── Computed: stats ──
   const totalLiveTVL = useMemo(() => {
-    const sum = Object.values(tvls).reduce((s, v) => s + (v || 0), 0)
+    // Sum only the displayed Solana protocols (excludes Hyperliquid L1 etc.)
+    const sum = DEFI_PROTOCOLS.reduce((s, p) => s + (tvls[p.id] || 0), 0)
     return sum > 0 ? sum : null
   }, [tvls])
 
@@ -291,8 +299,8 @@ export default function DefiHub() {
   // ── Tab definitions ──
   const TABS = [
     { id: 'overview', label: 'Overview' },
-    { id: 'yields', label: 'Yield Explorer' },
-    { id: 'xpoints', label: 'xPoints' },
+    { id: 'yields', label: 'Rendements xStocks' },
+    { id: 'xpoints', label: '⭐ xPoints', highlight: true },
   ]
 
   return (
@@ -331,10 +339,12 @@ export default function DefiHub() {
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             style={{
-              padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              padding: '8px 20px', borderRadius: 8, cursor: 'pointer',
               fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em',
-              background: activeTab === t.id ? 'rgba(0,228,181,0.12)' : 'transparent',
-              color: activeTab === t.id ? '#00e4b5' : 'var(--text-3)',
+              background: activeTab === t.id ? 'rgba(0,228,181,0.12)' : (t.highlight ? 'rgba(0,200,150,0.07)' : 'transparent'),
+              color: activeTab === t.id ? '#00e4b5' : (t.highlight ? '#00e4b5' : 'var(--text-3)'),
+              border: t.highlight ? '1px solid rgba(0,200,150,0.35)' : '1px solid transparent',
+              boxShadow: t.highlight ? '0 0 12px rgba(0,200,150,0.15)' : 'none',
               transition: 'all 0.15s',
             }}
           >
