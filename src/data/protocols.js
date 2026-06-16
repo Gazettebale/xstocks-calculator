@@ -4,6 +4,8 @@
 // Updated Q1 2026
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { XSTOCKS_LIST } from './xstocks'
+
 export const PROTOCOL_TYPES = {
   SWAP:    'Swap / Aggregateur',
   LENDING: 'Lending',
@@ -308,52 +310,19 @@ export const PROTOCOLS = [
     stats: { users: '180K+', age: '2 ans', chains: 1 },
   },
 
-  // ── PIGGYBANK ─────────────────────────────────────────────────────────────
-  {
-    id: 'piggybank',
-    name: 'PiggyBank Finance',
-    type: PROTOCOL_TYPES.VAULT,
-    chain: CHAIN.SOL,
-    logo: '🐷',
-    color: '#ec4899',
-    tvl: 'Early',
-    tvlRaw: 0,
-    url: 'https://app.piggybank.fi/oinks',
-    twitterUrl: 'https://x.com/PiggyBankFi',
-    docsUrl: 'https://app.piggybank.fi/oinks',
-    description: 'Protocole dédié aux xStocks sur Solana. Stratégies delta-neutral sur actions tokenisées. Campagne Oink Points terminée le 31 mars 2026 — vault xSPYx était à 3× multiplicateur.',
-    category: 'lending',
-    defillamaSlug: 'piggybank-finance',
-    supplyApy: { min: 0, max: 0 },
-    borrowApr: { min: 0, max: 0 },
-    ltv: null,
-    liquidationThreshold: null,
-    xstocksSupported: ['xAAPL','xMSFT','xGOOGL','xAMZN','xMETA','xNVDA','xTSLA','xNFLX','xAMD','xINTC','xCRM','xADBE','xPLTR','xCOIN','xHOOD','xUBER','xCRWD','xMSTR','xSNOW','xRBLX','xJPM','xBAC','xV','xMA','xGS','xBRK','xPYPL','xJNJ','xPFE','xLLY','xUNH','xMRNA','xABBV','xWMT','xCOST','xNKE','xMCD','xSBUX','xHD','xXOM','xCVX','xBA','xCAT','xSPY','xQQQ','xDIA','xIWM','xGOLD','xSILVER','xOIL'],
-    rewards: ['PIGGY'],
-    rewardApy: 0,
-    risk: 'high',
-    audited: false,
-    earlyStage: true,
-    airdrop: {
-      active: false,
-      season: 1,
-      title: 'Oink Points Campaign — Terminée le 31 mars 2026',
-      description: 'Campagne de points terminée. Les depositors qui avaient mis du xSPY (3× multiplicateur) avant le 31 mars sont dans le leaderboard. Les récompenses seront distribuées aux participants selon leur rang. PIGGY token non confirmé officiellement.',
-      startDate: '2025-10-30',
-      endDate: '2026-03-31',
-      vestingInfo: 'Campagne terminée. Distribution des récompenses en attente d\'annonce officielle.',
-      multipliers: 'xSPYx vault était à 3× · USDC 1× · Referral: 10% des oinks des filleuls',
-      howTo: 'Campagne terminée. Surveiller les annonces PiggyBank sur X pour la distribution des récompenses.',
-      urgency: 'low',
-    },
-    stats: { users: 'Early', age: '5 mois', chains: 1 },
-  },
-
 ]
 
 // Helper: Get protocols supporting a specific xStock
+// Derive each protocol's supported xStocks from the single source of truth (the
+// stock list). Keeps support lists + counts always consistent with the universe,
+// regardless of the hardcoded arrays above.
+for (const p of PROTOCOLS) {
+  const derived = XSTOCKS_LIST.filter(s => (s.protocols || []).includes(p.id)).map(s => s.symbol)
+  if (derived.length) p.xstocksSupported = derived
+}
+
 export function getProtocolsForStock(symbol) {
-  return PROTOCOLS.filter(p => p.xstocksSupported.includes(symbol))
+  return PROTOCOLS.filter(p => p.xstocksSupported?.includes(symbol))
 }
 
 // Calculate net APY for a strategy

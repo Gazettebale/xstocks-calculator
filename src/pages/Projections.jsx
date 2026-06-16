@@ -3,8 +3,10 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generateProjection, computeDividendProjection } from '../data/xstocks'
+import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generateProjection, computeDividendProjection, getSectorCagr, range52w } from '../data/xstocks'
 import { useLivePrices } from '../hooks/useLiveData'
+import useWalletStore from '../store/walletStore'
+import WalletConnect from '../components/WalletConnect'
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -19,21 +21,9 @@ const TIMEFRAMES = [
   { label: '10A', histDays: 365, projDays: 3650 },
 ]
 
-// Real historical CAGR by sector (50-year averages, S&P sector indices)
-const SECTOR_EXPECTED_RETURN = {
-  'Technology':         14.5, // NASDAQ-heavy, 1975-2025 avg
-  'Finance & Banking':   9.8, // S&P Financials long-term
-  'Healthcare & Pharma':10.4, // Healthcare outperforms slightly
-  'Consumer':            9.2, // Staples + discretionary blend
-  'Energy':              7.2, // Volatile, includes oil cycles
-  'Industrial':          9.4, // Dow Jones Industrial avg
-  'Commodities':         5.8, // Gold ~7%, broad commodities lower
-  'ETFs & Indices':     10.5, // S&P 500 50-year CAGR
-  'Crypto-Adjacent':    18,   // Shorter history, high variance
-}
-
+// Real historical CAGR by sub-sector — single source of truth lives in data/xstocks.js
 function getSectorBase(stock) {
-  return SECTOR_EXPECTED_RETURN[stock.sector] ?? 10
+  return +(getSectorCagr(stock.sector) * 100).toFixed(1)
 }
 
 // ─── tooltip ─────────────────────────────────────────────────────────────────
@@ -72,10 +62,113 @@ function StatMini({ label, value, color }) {
   )
 }
 
+// ─── Wallet portfolio projection ───────────────────────────────────────────────
+
+const WALLET_HORIZONS = [
+  { label: '1 an', years: 1 }, { label: '3 ans', years: 3 },
+  { label: '5 ans', years: 5 }, { label: '10 ans', years: 10 }, { label: '20 ans', years: 20 },
+]
+
+function WalletProjection() {
+  const holdings = useWalletStore(s => s.holdings)
+  const address = useWalletStore(s => s.address)
+  const [horizon, setHorizon] = useState(5)
+
+  const heldSymbols = useMemo(() => holdings.map(h => h.stock.symbol), [holdings])
+  const { prices: livePrices } = useLivePrices(heldSymbols)
+
+  const rows = useMemo(() => holdings.map(h => {
+    const price = livePrices[h.stock.symbol]?.price || h.stock.price
+    const value = price * h.qty
+    const base = getSectorCagr(h.stock.sector) * 100
+    const spread = Math.min((h.stock.beta || 1) * base * 0.7, base * 1.5)
+    const proj = (bias) => h.qty * price * Math.pow(1 + bias / 100, horizon)
+    return { ...h, price, value, cagr: base, bear: proj(base - spread), base: proj(base), bull: proj(base + spread) }
+  }).sort((a, b) => b.value - a.value), [holdings, livePrices, horizon])
+
+  const tot = rows.reduce((a, r) => ({
+    cur: a.cur + r.value, bear: a.bear + r.bear, base: a.base + r.base, bull: a.bull + r.bull,
+  }), { cur: 0, bear: 0, base: 0, bull: 0 })
+
+  if (!address || rows.length === 0) return null
+
+  const tile = (label, value, color, icon) => {
+    const gain = value - tot.cur
+    const pct = tot.cur > 0 ? (gain / tot.cur) * 100 : 0
+    const mult = tot.cur > 0 ? value / tot.cur : 0
+    return (
+      <div className="card" style={{ borderColor: color + '44', background: color + '08', padding: '14px 16px' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color, marginBottom: 8 }}>{icon} {label}</div>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>${value.toLocaleString('en', { maximumFractionDigits: 0 })}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: gain >= 0 ? '#4ade80' : '#f87171', marginTop: 4 }}>
+          {gain >= 0 ? '+' : ''}${gain.toLocaleString('en', { maximumFractionDigits: 0 })} · {mult.toFixed(2)}×
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{pct >= 0 ? '+' : ''}{pct.toFixed(0)}% sur {horizon} an{horizon > 1 ? 's' : ''}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 18, border: '1.5px solid rgba(0,200,150,0.25)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 800 }}>🔮 Projection de ton portefeuille on-chain</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginTop: 2 }}>
+            {rows.length} xStocks · valeur actuelle <strong style={{ color: '#14f195' }}>${tot.cur.toLocaleString('en', { maximumFractionDigits: 0 })}</strong> · modèle CAGR historique par secteur
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {WALLET_HORIZONS.map(h => (
+            <button key={h.years} className={`tab-btn ${horizon === h.years ? 'active' : ''}`} onClick={() => setHorizon(h.years)}>
+              {h.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        {tile('Aujourd\'hui', tot.cur, '#a5b4fc', '📍')}
+        {tile('Bear', tot.bear, '#ef4444', '🐻')}
+        {tile('Base', tot.base, '#60a5fa', '📊')}
+        {tile('Bull', tot.bull, '#10b981', '🐂')}
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead>
+            <tr><th>Asset</th><th>Qté</th><th>Valeur actuelle</th><th>🐻 Bear</th><th>📊 Base</th><th>🐂 Bull</th><th>CAGR</th></tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 12).map(r => (
+              <tr key={r.mint}>
+                <td>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 17 }}>{r.stock.logo}</span>
+                    <span style={{ fontWeight: 700, fontSize: 12.5 }}>{r.stock.symbol}</span>
+                  </div>
+                </td>
+                <td style={{ color: 'var(--text-2)', fontSize: 12.5 }}>{r.qty.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
+                <td style={{ fontWeight: 600 }}>${r.value.toLocaleString('en', { maximumFractionDigits: 0 })}</td>
+                <td style={{ color: '#f87171' }}>${r.bear.toLocaleString('en', { maximumFractionDigits: 0 })}</td>
+                <td style={{ color: '#60a5fa', fontWeight: 700 }}>${r.base.toLocaleString('en', { maximumFractionDigits: 0 })}</td>
+                <td style={{ color: '#10b981' }}>${r.bull.toLocaleString('en', { maximumFractionDigits: 0 })}</td>
+                <td style={{ color: 'var(--text-3)', fontSize: 12 }}>{r.cagr.toFixed(1)}%/an</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length > 12 && (
+          <div style={{ fontSize: 11.5, color: 'var(--text-3)', padding: '8px 4px' }}>+ {rows.length - 12} autres positions incluses dans les totaux</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function Projections() {
-  const [selectedSymbol, setSelectedSymbol] = useState('xAAPL')
+  const [selectedSymbol, setSelectedSymbol] = useState('AAPLx')
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[2])
   const [showFan, setShowFan] = useState(true)
   const [activeScenarios, setActiveScenarios] = useState(new Set(['bear', 'base', 'bull']))
@@ -174,7 +267,8 @@ export default function Projections() {
   // Technical stats
   const hist52w = useMemo(() => generateHistoricalData(stock, 365), [selectedSymbol])
   const avgPrice = hist52w.reduce((s, d) => s + d.price, 0) / hist52w.length
-  const posInRange = ((stock.price - stock.low52w) / (stock.high52w - stock.low52w)) * 100
+  const r52 = range52w(stock)               // effective 52W band (real or derived)
+  const posInRange = Math.max(0, Math.min(100, ((stock.price - r52.low) / (r52.high - r52.low)) * 100))
   const volatilityAnnual = Math.max(stock.beta * 0.18, 0.05) * 100
 
   // Scenario end prices
@@ -219,6 +313,10 @@ export default function Projections() {
           Analyse GJR-GARCH + mean reversion · Fan chart probabiliste · Simulateur de position
         </p>
       </div>
+
+      {/* ── Wallet: projection du portefeuille on-chain ────────────────────── */}
+      <WalletConnect compact />
+      <WalletProjection />
 
       {/* ── Controls ───────────────────────────────────────────────────────── */}
       {/* Stock description micro-card */}
@@ -378,9 +476,11 @@ export default function Projections() {
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 13, color: stock.change24h >= 0 ? '#4ade80' : '#f87171', fontWeight: 700 }}>
-              {stock.change24h >= 0 ? '▲' : '▼'} {Math.abs(stock.change24h)}% 24h
-            </div>
+            {stock.change24h ? (
+              <div style={{ fontSize: 13, color: stock.change24h >= 0 ? '#4ade80' : '#f87171', fontWeight: 700 }}>
+                {stock.change24h >= 0 ? '▲' : '▼'} {Math.abs(stock.change24h)}% 24h
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -557,8 +657,8 @@ export default function Projections() {
         <div className="card">
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>Analyse Technique</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
-            <StatMini label="52W High" value={`$${stock.high52w.toLocaleString()}`} color="#4ade80" />
-            <StatMini label="52W Low" value={`$${stock.low52w.toLocaleString()}`} color="#f87171" />
+            <StatMini label="52W High" value={`$${r52.high.toLocaleString(undefined, { maximumFractionDigits: 2 })}${stock.high52w ? '' : '*'}`} color="#4ade80" />
+            <StatMini label="52W Low" value={`$${r52.low.toLocaleString(undefined, { maximumFractionDigits: 2 })}${stock.low52w ? '' : '*'}`} color="#f87171" />
             <StatMini label="Moy. 1 an" value={`$${avgPrice.toFixed(2)}`} />
             <StatMini label="Vol. annuelle" value={`${volatilityAnnual.toFixed(1)}%`} color="#fbbf24" />
             <StatMini label="P/E" value={stock.pe || 'N/A'} />
@@ -582,9 +682,9 @@ export default function Projections() {
           {/* 52W range */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-3)', marginBottom: 6, fontWeight: 600 }}>
-              <span>52W Low: ${stock.low52w}</span>
+              <span>52W Low: ${r52.low.toFixed(2)}</span>
               <span style={{ color: '#a5b4fc' }}>Actuel: ${stock.price}</span>
-              <span>52W High: ${stock.high52w}</span>
+              <span>52W High: ${r52.high.toFixed(2)}</span>
             </div>
             <div style={{ height: 8, background: 'rgba(255,255,255,0.06)', borderRadius: 4, position: 'relative', overflow: 'hidden' }}>
               <div style={{

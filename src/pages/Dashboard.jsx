@@ -5,15 +5,18 @@ import { PROTOCOLS, SOLANA_PROTOCOLS, TOTAL_TVL } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import { useLivePrices } from '../hooks/useLiveData'
 import TradingViewChart from '../components/TradingViewChart'
+import WalletConnect from '../components/WalletConnect'
 
 const SECTOR_COLORS = ['#00c896','#14f195','#f59e0b','#ec4899','#06b6d4','#a855f7','#f43f5e','#10b981']
 
 // ETF holdings info
 const ETF_INFO = {
-  xSPY:  { tracks: 'S&P 500',      desc: '500 plus grandes capitalisations US', topHoldings: ['AAPL','MSFT','NVDA','AMZN','META','GOOGL','BRK.B','LLY','JPM','V'] },
-  xQQQ:  { tracks: 'Nasdaq 100',   desc: 'Top 100 entreprises non-financières Nasdaq', topHoldings: ['AAPL','MSFT','NVDA','AMZN','META','TSLA','GOOGL','COST','NFLX','AMD'] },
-  xDIA:  { tracks: 'Dow Jones 30', desc: '30 blue chips industriels US', topHoldings: ['UNH','GS','MSFT','HD','CAT','MCD','V','AAPL','BA','SBUX'] },
-  xIWM:  { tracks: 'Russell 2000', desc: '2000 petites capitalisations US diversifiées', topHoldings: ['Diversifié','Small Caps','1800+ titres'] },
+  SPYx:  { tracks: 'S&P 500',      desc: '500 plus grandes capitalisations US', topHoldings: ['AAPL','MSFT','NVDA','AMZN','META','GOOGL','BRK.B','LLY','JPM','V'] },
+  VOOx:  { tracks: 'S&P 500',      desc: 'S&P 500 (Vanguard, frais ultra-bas)', topHoldings: ['AAPL','MSFT','NVDA','AMZN','META','GOOGL','BRK.B','LLY','JPM','V'] },
+  QQQx:  { tracks: 'Nasdaq 100',   desc: 'Top 100 entreprises non-financières Nasdaq', topHoldings: ['AAPL','MSFT','NVDA','AMZN','META','TSLA','GOOGL','COST','NFLX','AMD'] },
+  IWMx:  { tracks: 'Russell 2000', desc: '2000 petites capitalisations US diversifiées', topHoldings: ['Diversifié','Small Caps','1800+ titres'] },
+  VTIx:  { tracks: 'Total US Market', desc: 'Tout le marché actions US (large + small)', topHoldings: ['AAPL','MSFT','NVDA','AMZN','META','GOOGL','BRK.B','LLY','JPM','V'] },
+  SMHx:  { tracks: 'Semi-conducteurs', desc: 'Les 25 plus gros fabricants de puces', topHoldings: ['NVDA','TSM','AVGO','AMD','ASML','MU','LRCX','KLAC','AMAT','MRVL'] },
 }
 
 // Simple CSS trend bar for table cells (lightweight alternative to chart widgets)
@@ -72,12 +75,12 @@ export default function Dashboard({ setPage }) {
     }))
   }, [])
 
-  const spy = XSTOCKS_LIST.find(x => x.symbol === 'xSPY')
-  const marketTrend = spy.change24h >= 0
+  const spy = XSTOCKS_LIST.find(x => x.symbol === 'SPYx') ?? XSTOCKS_LIST[0]
+  const marketTrend = (spy?.change24h ?? 0) >= 0
 
-  // Live xSPY price from Pyth Network
-  const { prices: livePrices, marketOpen, lastUpdate: liveTs } = useLivePrices(['xSPY'])
-  const liveSpyEntry = livePrices['xSPY']
+  // Live SPYx price from Pyth Network
+  const { prices: livePrices, marketOpen, lastUpdate: liveTs } = useLivePrices(['SPYx'])
+  const liveSpyEntry = livePrices['SPYx']
   const liveSpyPrice = liveSpyEntry?.price
   const spyIsLive    = liveSpyEntry?.isLive ?? false
 
@@ -101,6 +104,9 @@ export default function Dashboard({ setPage }) {
           </div>
         </div>
       </div>
+
+      {/* ── Wallet connect (read-only) ─────────────────────────────────── */}
+      <WalletConnect />
 
       {/* ── Hero Stats ─────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
@@ -161,7 +167,7 @@ export default function Dashboard({ setPage }) {
           <div style={{ padding: '14px 18px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>xSPY — S&P 500</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>SPYx — S&P 500</div>
                 <span style={{ fontSize: 10, color: spyIsLive ? '#10b981' : '#94a3b8', fontWeight: 800 }}>
                   {spyIsLive ? '⚡ Pyth Live' : '◌ Indicatif'}
                 </span>

@@ -13,7 +13,7 @@ const TVL_REFRESH_MS   = 5 * 60_000   // 5 min — DeFiLlama polite polling
  * Fetch live Pyth prices for a list of xStock symbols.
  * Auto-refreshes every 30 s during market hours, every 2 min otherwise.
  *
- * @param {string[]} symbols  e.g. ['xAAPL','xNVDA','xSPY']
+ * @param {string[]} symbols  e.g. ['AAPLx','NVDAx','SPYx']
  * @returns {{ prices, loading, error, lastUpdate, marketOpen }}
  */
 export function useLivePrices(symbols = []) {

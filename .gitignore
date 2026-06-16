@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Env / secrets — never commit real values (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -22,3 +29,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.claude/

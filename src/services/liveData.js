@@ -4,6 +4,8 @@
 // DeFiLlama: https://api.llama.fi / https://yields.llama.fi
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { STOCKS_BY_SYMBOL } from '../data/xstocks'
+
 const HERMES_URL = 'https://hermes.pyth.network/v2'
 const DEFILLAMA_TVL_URL = 'https://api.llama.fi'
 const DEFILLAMA_YIELDS_URL = 'https://yields.llama.fi'
@@ -34,11 +36,12 @@ export const PYTH_FEED_IDS = {
   'SILVER': 'f2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e', // XAG/USD
 }
 
-// xStock symbol → underlying (reverse map for non-standard names)
-const XSTOCK_TO_UNDERLYING = {
-  'xGOLD':   'GOLD',
-  'xSILVER': 'SILVER',
+// Map metal-ETF underlyings to Pyth metal feeds (GLD→XAU, SLV→XAG)
+const METAL_FEEDS = {
+  'GLD':    '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2', // XAU/USD
+  'SLV':    'f2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e', // XAG/USD
 }
+Object.assign(PYTH_FEED_IDS, METAL_FEEDS)
 
 // Cache for dynamically discovered feed IDs
 const FEED_CACHE_KEY = 'pyth_feed_ids_v1'
@@ -152,13 +155,14 @@ export async function fetchPythPrices(feedIds) {
  * Returns: { xSymbol: { price, change24h?, isLive, publishTime } }
  */
 export async function fetchXStockLivePrices(xStocksSymbols) {
-  // Build underlying → xSymbol map
-  const underlyings = xStocksSymbols.map(sym => XSTOCK_TO_UNDERLYING[sym] ?? sym.slice(1))
+  // Resolve underlying ticker from the data (suffix symbols, e.g. AAPLx → AAPL)
+  const toUnderlying = (sym) => STOCKS_BY_SYMBOL[sym]?.underlying ?? sym.replace(/x$/, '')
+  const underlyings = xStocksSymbols.map(toUnderlying)
   const feedIds = await resolveFeedIds([...new Set(underlyings)])
 
   // Collect all feed IDs we can resolve
   const entries = xStocksSymbols.map(xSym => {
-    const underlying = XSTOCK_TO_UNDERLYING[xSym] ?? xSym.slice(1)
+    const underlying = toUnderlying(xSym)
     const feedId = feedIds[underlying]
     return { xSym, underlying, feedId }
   }).filter(e => e.feedId)
@@ -191,7 +195,6 @@ const DEFILLAMA_SLUGS = {
   drift:       'drift',
   marginfi:    'marginfi',
   titan:       'titan-exchange',
-  piggybank:   'piggybank-finance',
   hyperliquid: 'hyperliquid',
 }
 

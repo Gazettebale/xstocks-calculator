@@ -3,10 +3,12 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   AreaChart, Area, XAxis, YAxis, ComposedChart, Line, Bar, CartesianGrid,
 } from 'recharts'
-import { XSTOCKS_LIST } from '../data/xstocks'
+import { XSTOCKS_LIST, range52w } from '../data/xstocks'
 import { PROTOCOLS } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
+import useWalletStore from '../store/walletStore'
 import { useLivePrices } from '../hooks/useLiveData'
+import WalletConnect from '../components/WalletConnect'
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -22,6 +24,7 @@ const STRATEGY_LABELS = {
 
 const TABS = [
   { id: 'positions', label: '💼 Positions' },
+  { id: 'wallet',    label: '🔗 Wallet' },
   { id: 'dca',       label: '📅 DCA Tracker' },
   { id: 'watchlist', label: '⭐ Watchlist' },
   { id: 'sectors',   label: '🗂️ Secteurs' },
@@ -32,7 +35,7 @@ const TABS = [
 function AddPositionModal({ onClose, livePrices }) {
   const addPosition = usePortfolioStore(s => s.addPosition)
   const [form, setForm] = useState({
-    symbol: 'xAAPL', quantity: '', entryPrice: '', protocol: '', strategy: 'hold', notes: '',
+    symbol: 'AAPLx', quantity: '', entryPrice: '', protocol: '', strategy: 'hold', notes: '',
   })
 
   const liveStocks = XSTOCKS_LIST.filter(x => x.status === 'live')
@@ -135,7 +138,7 @@ function AddPositionModal({ onClose, livePrices }) {
 // ─── DCA Tracker ─────────────────────────────────────────────────────────────
 
 function DCATracker({ livePrices }) {
-  const [dcaSymbol, setDcaSymbol] = useState('xAAPL')
+  const [dcaSymbol, setDcaSymbol] = useState('AAPLx')
   const [monthlyAmount, setMonthlyAmount] = useState('500')
   const [startPrice, setStartPrice] = useState('')
   const [months, setMonths] = useState(12)
@@ -310,6 +313,115 @@ function DCATracker({ livePrices }) {
   )
 }
 
+// ─── Wallet tab — live on-chain holdings ─────────────────────────────────────
+
+function WalletTab({ currentPrices }) {
+  const holdings = useWalletStore(s => s.holdings)
+  const address = useWalletStore(s => s.address)
+  const addPosition = usePortfolioStore(s => s.addPosition)
+  const positions = usePortfolioStore(s => s.positions)
+  const [imported, setImported] = useState(false)
+
+  const enriched = useMemo(() => holdings.map(h => {
+    const price = currentPrices[h.stock.symbol] || h.stock.price
+    const value = price * h.qty
+    return { ...h, price, value }
+  }).sort((a, b) => b.value - a.value), [holdings, currentPrices])
+
+  const total = enriched.reduce((s, h) => s + h.value, 0)
+
+  const importAll = () => {
+    const existing = new Set(positions.map(p => p.symbol))
+    enriched.forEach(h => {
+      if (existing.has(h.stock.symbol)) return            // don't duplicate
+      addPosition({
+        symbol: h.stock.symbol, name: h.stock.name,
+        quantity: h.qty, entryPrice: h.price,             // entrée = prix actuel (à ajuster)
+        protocol: null, strategy: 'hold', notes: 'Importé du wallet on-chain',
+      })
+    })
+    setImported(true)
+  }
+
+  if (!address) {
+    return (
+      <div className="card" style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-3)' }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>👛</div>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Aucun wallet connecté</div>
+        <div style={{ fontSize: 13 }}>Colle ton adresse Solana ci-dessus pour voir tes xStocks on-chain en temps réel.</div>
+      </div>
+    )
+  }
+
+  if (enriched.length === 0) {
+    return (
+      <div className="card" style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-3)' }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>🔍</div>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Aucun xStock détecté sur ce wallet</div>
+        <div style={{ fontSize: 13 }}>L'adresse ne détient aucun token xStock connu, ou la lecture RPC a échoué.</div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>${total.toLocaleString('en', { maximumFractionDigits: 2 })}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{enriched.length} xStocks · valeur on-chain live</div>
+        </div>
+        <button className="btn-primary" onClick={importAll}>
+          {imported ? '✓ Importé dans Positions' : '↓ Importer comme positions'}
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginBottom: 12 }}>
+        Les quantités sont lues on-chain. L'import crée des positions avec le prix actuel comme prix d'entrée —
+        ajuste-le ensuite si tu connais ton vrai prix d'entrée.
+      </div>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table>
+          <thead>
+            <tr><th>Asset</th><th>Quantité</th><th>Prix</th><th>Valeur</th><th>Allocation</th></tr>
+          </thead>
+          <tbody>
+            {enriched.map(h => {
+              const pct = total > 0 ? (h.value / total) * 100 : 0
+              const isLive = !!currentPrices[h.stock.symbol]
+              return (
+                <tr key={h.mint}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 20 }}>{h.stock.logo}</span>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{h.stock.symbol}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.stock.name}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ fontWeight: 600 }}>{h.qty.toLocaleString('en', { maximumFractionDigits: 4 })}</td>
+                  <td>
+                    <span style={{ fontWeight: 600 }}>${h.price.toLocaleString('en', { maximumFractionDigits: 2 })}</span>
+                    {isLive && <span style={{ marginLeft: 5, width: 5, height: 5, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />}
+                  </td>
+                  <td style={{ fontWeight: 700 }}>${h.value.toLocaleString('en', { maximumFractionDigits: 2 })}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ flex: 1, maxWidth: 90, height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: '#00c896', borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{pct.toFixed(1)}%</span>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export default function Portfolio() {
@@ -317,6 +429,7 @@ export default function Portfolio() {
   const removePosition = usePortfolioStore(s => s.removePosition)
   const watchlist = usePortfolioStore(s => s.watchlist)
   const removeFromWatchlist = usePortfolioStore(s => s.removeFromWatchlist)
+  const walletHoldings = useWalletStore(s => s.holdings)
   const [showAddModal, setShowAddModal] = useState(false)
   const [activeTab, setActiveTab] = useState('positions')
 
@@ -399,6 +512,9 @@ export default function Portfolio() {
         <button className="btn-primary" onClick={() => setShowAddModal(true)}>+ Ajouter position</button>
       </div>
 
+      {/* ── Wallet connect (read-only) ─────────────────────────────────────── */}
+      <WalletConnect />
+
       {/* ── Tabs — always visible including DCA ────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
         {TABS.map(t => (
@@ -413,9 +529,17 @@ export default function Portfolio() {
                 {positions.length}
               </span>
             )}
+            {t.id === 'wallet' && walletHoldings.length > 0 && (
+              <span style={{ marginLeft: 6, background: 'rgba(0,200,150,0.2)', color: '#00e4b5', borderRadius: 8, padding: '0 6px', fontSize: 10, fontWeight: 700 }}>
+                {walletHoldings.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {/* ── Wallet tab — live on-chain holdings ────────────────────────────── */}
+      {activeTab === 'wallet' && <WalletTab currentPrices={currentPrices} />}
 
       {/* ── DCA tab — always available ─────────────────────────────────────── */}
       {activeTab === 'dca' && <DCATracker livePrices={livePrices} />}
@@ -640,10 +764,10 @@ export default function Portfolio() {
                           </div>
                         </td>
                         <td style={{ color: s.change24h >= 0 ? '#4ade80' : '#f87171', fontWeight: 600 }}>
-                          {s.change24h >= 0 ? '▲' : '▼'} {Math.abs(s.change24h)}%
+                          {s.change24h ? `${s.change24h >= 0 ? '▲' : '▼'} ${Math.abs(s.change24h)}%` : '—'}
                         </td>
                         <td style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                          ${s.low52w} — ${s.high52w}
+                          {(() => { const r = range52w(s); return `$${r.low.toFixed(0)} — $${r.high.toFixed(0)}` })()}
                         </td>
                         <td style={{ fontSize: 12 }}>{s.protocols?.length || 0} protocoles</td>
                         <td>

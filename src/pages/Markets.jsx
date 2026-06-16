@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { XSTOCKS_LIST, SECTORS, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, generateHistoricalData } from '../data/xstocks'
+import { XSTOCKS_LIST, SECTORS, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, generateHistoricalData, range52w } from '../data/xstocks'
 import { getProtocolsForStock } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
 import { useLivePrices } from '../hooks/useLiveData'
@@ -37,7 +37,8 @@ function StockModal({ stock, liveData, onClose }) {
   const isLive = liveData?.isLive ?? false
 
   const isUp = stock.change24h >= 0
-  const rangePos = Math.min(Math.max(((displayPrice - stock.low52w) / (stock.high52w - stock.low52w)) * 100, 2), 98)
+  const r = range52w(stock)
+  const rangePos = Math.min(Math.max(((displayPrice - r.low) / (r.high - r.low)) * 100, 2), 98)
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -61,9 +62,11 @@ function StockModal({ stock, liveData, onClose }) {
           <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.04em' }}>
             ${displayPrice >= 1000 ? displayPrice.toLocaleString() : displayPrice.toFixed(2)}
           </div>
-          <span className={`badge ${isUp ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 13 }}>
-            {isUp ? '+' : ''}{stock.change24h}% 24h
-          </span>
+          {stock.change24h ? (
+            <span className={`badge ${isUp ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 13 }}>
+              {isUp ? '+' : ''}{stock.change24h}% 24h
+            </span>
+          ) : null}
           <span className={`badge ${stock.status === 'live' ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: 11 }}>
             {stock.status === 'live' ? '● Live' : '◌ Bientôt'}
           </span>
@@ -88,9 +91,9 @@ function StockModal({ stock, liveData, onClose }) {
         {/* 52W Range */}
         <div style={{ marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>
-            <span>52W Low: ${stock.low52w.toLocaleString()}</span>
+            <span>52W Low: ${r.low.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
             <span style={{ color: 'var(--text)', fontWeight: 600 }}>Actuel: ${displayPrice >= 1000 ? displayPrice.toLocaleString() : displayPrice.toFixed(2)}</span>
-            <span>52W High: ${stock.high52w.toLocaleString()}</span>
+            <span>52W High: ${r.high.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
           </div>
           <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, position: 'relative' }}>
             <div style={{
@@ -114,8 +117,8 @@ function StockModal({ stock, liveData, onClose }) {
             { label: 'Market Cap', value: stock.marketCap },
             { label: 'P/E Ratio', value: stock.pe ? stock.pe.toFixed(1) : 'N/A' },
             { label: 'Dividend', value: stock.dividendYield ? `${stock.dividendYield}%` : '—' },
-            { label: '52W High', value: `$${stock.high52w.toLocaleString()}` },
-            { label: '52W Low', value: `$${stock.low52w.toLocaleString()}` },
+            { label: '52W High', value: `$${r.high.toLocaleString(undefined, { maximumFractionDigits: 2 })}` },
+            { label: '52W Low', value: `$${r.low.toLocaleString(undefined, { maximumFractionDigits: 2 })}` },
             { label: 'Beta', value: stock.beta },
             { label: 'Vol 24h', value: stock.volume24h ? `${stock.volume24h}` : '—' },
             { label: 'EPS', value: stock.eps ? `$${stock.eps}` : 'N/A' },
@@ -288,7 +291,8 @@ export default function Markets() {
               const protos = getProtocolsForStock(stock.symbol)
               const liveEntry = prices[stock.symbol]
               const displayPrice = liveEntry?.price ?? stock.price
-              const rangePos = Math.min(Math.max(((displayPrice - stock.low52w) / (stock.high52w - stock.low52w)) * 100, 2), 98)
+              const r = range52w(stock)
+              const rangePos = Math.min(Math.max(((displayPrice - r.low) / (r.high - r.low)) * 100, 2), 98)
               const isUp = stock.change24h >= 0
               const hasLive = Boolean(liveEntry?.isLive)
               return (
@@ -312,9 +316,13 @@ export default function Markets() {
                     </div>
                   </td>
                   <td>
-                    <span className={isUp ? 'positive' : 'negative'} style={{ fontWeight: 700, fontSize: 13.5 }}>
-                      {isUp ? '+' : ''}{stock.change24h}%
-                    </span>
+                    {stock.change24h ? (
+                      <span className={isUp ? 'positive' : 'negative'} style={{ fontWeight: 700, fontSize: 13.5 }}>
+                        {isUp ? '+' : ''}{stock.change24h}%
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-3)', fontSize: 13.5 }}>—</span>
+                    )}
                   </td>
                   <td>
                     <div style={{ width: 90 }}>
@@ -322,8 +330,8 @@ export default function Markets() {
                         <div style={{ position: 'absolute', left: `${rangePos}%`, top: -2, width: 8, height: 8, borderRadius: '50%', background: isUp ? '#22c55e' : '#ef4444', transform: 'translateX(-50%)' }} />
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-3)' }}>
-                        <span>${stock.low52w >= 1000 ? (stock.low52w/1000).toFixed(0)+'K' : stock.low52w.toFixed(0)}</span>
-                        <span>${stock.high52w >= 1000 ? (stock.high52w/1000).toFixed(0)+'K' : stock.high52w.toFixed(0)}</span>
+                        <span>${r.low >= 1000 ? (r.low/1000).toFixed(0)+'K' : r.low.toFixed(0)}</span>
+                        <span>${r.high >= 1000 ? (r.high/1000).toFixed(0)+'K' : r.high.toFixed(0)}</span>
                       </div>
                     </div>
                   </td>

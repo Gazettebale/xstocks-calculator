@@ -191,6 +191,9 @@ export default function DefiHub() {
   const [activeTab, setActiveTab] = useState('overview')
   const [yieldSort, setYieldSort] = useState({ key: 'apy', dir: 'desc' })
   const [yieldFilter, setYieldFilter] = useState('all')
+  const [yieldSearch, setYieldSearch] = useState('')
+  const [minTvl, setMinTvl] = useState(10000)        // hide dust pools by default
+  const [xstocksOnly, setXstocksOnly] = useState(false)
 
   // Live data hooks
   const { tvls, tvlsFormatted, loading: tvlLoading } = useLiveTVLs()
@@ -229,11 +232,29 @@ export default function DefiHub() {
 
   const activeAirdrops = SOLANA_PROTOCOLS.filter(p => p.airdrop?.active).length
 
+  // Tokens that identify an xStock pool (underlying + x-symbol, uppercased)
+  const xstockTokens = useMemo(() => {
+    const set = new Set()
+    XSTOCKS_LIST.forEach(s => {
+      set.add(s.underlying.toUpperCase())
+      set.add(s.symbol.toUpperCase())          // e.g. AAPLX
+    })
+    return set
+  }, [])
+
+  const isXstockPool = (pool) =>
+    (pool.symbol || '').toUpperCase().split(/[-/ ]+/).some(t => xstockTokens.has(t))
+
   // ── Yield Explorer: sorted + filtered pools ──
   const filteredPools = useMemo(() => {
     let list = [...pools]
-    if (yieldFilter !== 'all') {
-      list = list.filter(p => p.project === yieldFilter)
+    if (yieldFilter !== 'all') list = list.filter(p => p.project === yieldFilter)
+    if (xstocksOnly) list = list.filter(isXstockPool)
+    if (minTvl > 0) list = list.filter(p => (p.tvlUsd ?? 0) >= minTvl)
+    if (yieldSearch.trim()) {
+      const q = yieldSearch.trim().toLowerCase()
+      list = list.filter(p =>
+        (p.symbol || '').toLowerCase().includes(q) || (p.project || '').toLowerCase().includes(q))
     }
     list.sort((a, b) => {
       const valA = a[yieldSort.key] ?? 0
@@ -241,7 +262,19 @@ export default function DefiHub() {
       return yieldSort.dir === 'asc' ? valA - valB : valB - valA
     })
     return list
-  }, [pools, yieldSort, yieldFilter])
+  }, [pools, yieldSort, yieldFilter, xstocksOnly, minTvl, yieldSearch, xstockTokens])
+
+  // Summary stats for the filtered set
+  const yieldStats = useMemo(() => {
+    if (!filteredPools.length) return { count: 0, best: 0, avg: 0, tvl: 0 }
+    const apys = filteredPools.map(p => p.apy ?? 0)
+    return {
+      count: filteredPools.length,
+      best: Math.max(...apys),
+      avg: apys.reduce((s, v) => s + v, 0) / apys.length,
+      tvl: filteredPools.reduce((s, p) => s + (p.tvlUsd ?? 0), 0),
+    }
+  }, [filteredPools])
 
   const uniqueProjects = useMemo(() => {
     const set = new Set(pools.map(p => p.project))
@@ -383,29 +416,68 @@ export default function DefiHub() {
       {/* ── YIELD EXPLORER TAB ───────────────────────────────────────────── */}
       {activeTab === 'yields' && (
         <div>
+          {/* Summary tiles */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 18 }}>
+            {[
+              { label: 'Pools affichés', value: yieldStats.count, color: '#6366f1' },
+              { label: 'Meilleur APY', value: yieldStats.best > 0 ? `${yieldStats.best.toFixed(1)}%` : '—', color: '#00e4b5' },
+              { label: 'APY moyen', value: yieldStats.avg > 0 ? `${yieldStats.avg.toFixed(1)}%` : '—', color: '#4ade80' },
+              { label: 'TVL cumulée', value: yieldStats.tvl ? formatTVL(yieldStats.tvl) : '—', color: '#a5b4fc' },
+            ].map(s => (
+              <div key={s.label} style={{ background: 'var(--card)', borderRadius: 12, padding: '12px 16px', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10.5, color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>{s.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
           {/* Filter bar */}
-          <div style={{
-            display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap',
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>Filter:</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 18, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', minWidth: 200, flex: 1, maxWidth: 280 }}>
+              <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)', fontSize: 13 }}>🔍</span>
+              <input
+                value={yieldSearch}
+                onChange={e => setYieldSearch(e.target.value)}
+                placeholder="Token ou protocole (AAPL, USDC, SOL…)"
+                style={{
+                  width: '100%', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8,
+                  padding: '8px 12px 8px 32px', color: 'var(--text)', fontSize: 12.5, outline: 'none',
+                }}
+              />
+            </div>
             <select
               value={yieldFilter}
               onChange={e => setYieldFilter(e.target.value)}
+              style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', color: 'var(--text)', fontSize: 12.5, cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="all">Tous protocoles</option>
+              {uniqueProjects.map(proj => <option key={proj} value={proj}>{proj}</option>)}
+            </select>
+            <select
+              value={minTvl}
+              onChange={e => setMinTvl(Number(e.target.value))}
+              style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', color: 'var(--text)', fontSize: 12.5, cursor: 'pointer', outline: 'none' }}
+            >
+              <option value={0}>TVL: tout</option>
+              <option value={10000}>TVL &gt; $10k</option>
+              <option value={100000}>TVL &gt; $100k</option>
+              <option value={1000000}>TVL &gt; $1M</option>
+            </select>
+            <button
+              onClick={() => setXstocksOnly(v => !v)}
               style={{
-                background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8,
-                padding: '7px 12px', color: 'var(--text)', fontSize: 12.5, cursor: 'pointer',
-                outline: 'none',
+                padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                border: `1px solid ${xstocksOnly ? 'rgba(0,200,150,0.5)' : 'var(--border)'}`,
+                background: xstocksOnly ? 'rgba(0,200,150,0.12)' : 'var(--card)',
+                color: xstocksOnly ? '#00e4b5' : 'var(--text-3)',
               }}
             >
-              <option value="all">All Protocols ({pools.length})</option>
-              {uniqueProjects.map(proj => (
-                <option key={proj} value={proj}>{proj}</option>
-              ))}
-            </select>
+              {xstocksOnly ? '✓ ' : ''}xStocks uniquement
+            </button>
             <div style={{ flex: 1 }} />
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
               {filteredPools.length} pools
-              {yieldsLoading && <span style={{ marginLeft: 8, color: '#00e4b5' }}>Loading...</span>}
+              {yieldsLoading && <span style={{ marginLeft: 8, color: '#00e4b5' }}>Loading…</span>}
             </div>
           </div>
 
@@ -455,19 +527,26 @@ export default function DefiHub() {
 
               {/* Table rows */}
               <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+                {filteredPools.length === 0 && (
+                  <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                    Aucun pool ne correspond à ces filtres.{xstocksOnly && ' Désactive « xStocks uniquement » pour élargir.'}
+                  </div>
+                )}
                 {filteredPools.slice(0, 100).map((pool, i) => {
                   const totalApy = pool.apy ?? 0
                   const isTopYield = totalApy >= 20
                   return (
                     <div
                       key={pool.pool}
+                      title="Ouvrir sur DeFiLlama"
+                      onClick={() => window.open(`https://defillama.com/yields/pool/${pool.pool}`, '_blank', 'noopener')}
                       style={{
                         display: 'grid',
                         gridTemplateColumns: '160px 1fr 90px 110px 90px 90px 90px 80px',
                         gap: 0,
                         padding: '10px 16px',
                         borderBottom: '1px solid var(--border)',
-                        fontSize: 12.5,
+                        fontSize: 12.5, cursor: 'pointer',
                         background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.08)',
                         transition: 'background 0.1s',
                       }}
