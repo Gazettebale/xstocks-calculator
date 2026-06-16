@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import { XSTOCKS_LIST, LIVE_COUNT, COMING_SOON_COUNT, getTvSymbol, STOCKS_BY_SYMBOL } from '../data/xstocks'
 import { PROTOCOLS, SOLANA_PROTOCOLS } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
@@ -26,14 +26,16 @@ function TVLSparkline({ data }) {
   if (!data?.length) return null
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+      <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
         <defs>
           <linearGradient id="tvl-spark" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#00e4b5" stopOpacity={0.45} />
             <stop offset="100%" stopColor="#00e4b5" stopOpacity={0} />
           </linearGradient>
         </defs>
-        <Area type="monotone" dataKey="tvl" stroke="#00e4b5" strokeWidth={1.5} fill="url(#tvl-spark)" dot={false} isAnimationActive={false} />
+        {/* Scale Y to the real min/max (not 0) so the adoption curve fills the height */}
+        <YAxis hide domain={[(min) => min * 0.985, (max) => max * 1.01]} />
+        <Area type="monotone" dataKey="tvl" stroke="#00e4b5" strokeWidth={1.75} fill="url(#tvl-spark)" dot={false} isAnimationActive={false} />
       </AreaChart>
     </ResponsiveContainer>
   )
