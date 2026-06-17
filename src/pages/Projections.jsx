@@ -343,7 +343,7 @@ export default function Projections() {
             <span style={{ color: '#00e4b5', fontWeight: 600 }}>{stock.sector}</span>
             <span style={{ margin: '0 8px', color: 'var(--text-3)' }}>·</span>
             <span>Retour hist.: <strong style={{ color: histBase > 12 ? '#14f195' : '#fbbf24' }}>{histBase}%/an</strong>
-              {getRealStats(stock)
+              {getRealStats(stock)?.years
                 ? <span style={{ color: 'var(--text-3)' }}> · {getRealStats(stock).years} ans de données réelles</span>
                 : <span style={{ color: 'var(--text-3)' }}> · estimé secteur (pas d'historique)</span>}
             </span>
@@ -701,7 +701,7 @@ export default function Projections() {
               color="#fbbf24"
             />
             <StatMini
-              label={getRealStats(stock) ? 'Retour hist.' : 'CAGR secteur'}
+              label={getRealStats(stock)?.years ? 'Retour hist.' : 'CAGR secteur'}
               value={`${histBase}%/an`}
               color="#a5b4fc"
             />

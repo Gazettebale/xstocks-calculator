@@ -1963,7 +1963,7 @@ export function getRealStats(stock) {
 // for tickers without long history (recent IPOs).
 export function getExpectedReturn(stock) {
   const h = getRealStats(stock)
-  if (h) return Math.max(-0.02, Math.min(0.22, 0.5 * h.cagr10 + 0.5 * h.cagr))
+  if (h && h.cagr != null && h.cagr10 != null) return Math.max(-0.02, Math.min(0.22, 0.5 * h.cagr10 + 0.5 * h.cagr))
   return getSectorCagr(stock?.sector)
 }
 
@@ -1971,8 +1971,21 @@ export function getExpectedReturn(stock) {
 // Beta-based proxy. Clamped to a sane band. Drives the projection fan width.
 export function getRealVol(stock) {
   const h = getRealStats(stock)
-  const v = h ? h.vol : Math.max((stock?.beta || 1) * 0.18, 0.05)
+  const v = h && h.vol != null ? h.vol : Math.max((stock?.beta || 1) * 0.18, 0.05)
   return Math.max(0.08, Math.min(0.9, v))
+}
+
+// Merge real Yahoo fundamentals (beta, 52-week range, market cap) into the stock
+// objects so every consumer (Markets, Projections, modal, directory) shows real data.
+// Projection return/volatility are read via the helpers above; this only overrides the
+// display fundamentals when a real value exists (recent IPOs keep their baseline).
+for (const s of XSTOCKS_LIST) {
+  const h = HISTORY_STATS[s.underlying]
+  if (!h) continue
+  if (h.beta != null) s.beta = h.beta
+  if (h.high52w != null) s.high52w = h.high52w
+  if (h.low52w != null) s.low52w = h.low52w
+  if (h.marketCap) s.marketCap = h.marketCap
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
