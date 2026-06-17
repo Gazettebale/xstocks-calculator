@@ -356,16 +356,30 @@ export default function Projections() {
       )}
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-        <select
-          className="select-field"
-          style={{ maxWidth: 280 }}
-          value={selectedSymbol}
-          onChange={e => setSelectedSymbol(e.target.value)}
-        >
-          {liveStocks.map(s => (
-            <option key={s.symbol} value={s.symbol}>{s.logo} {s.symbol} — {s.name}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#00e4b5' }}>
+            📊 Marché analysé · clique pour changer de titre
+          </span>
+          <div style={{ position: 'relative', width: 320, maxWidth: '100%' }}>
+            <select
+              className="select-field"
+              style={{
+                width: '100%', fontSize: 15, fontWeight: 700,
+                padding: '12px 40px 12px 14px', cursor: 'pointer',
+                border: '2px solid rgba(0,228,181,0.55)', borderRadius: 12,
+                background: 'rgba(0,228,181,0.08)', color: 'var(--text)',
+                appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
+              }}
+              value={selectedSymbol}
+              onChange={e => setSelectedSymbol(e.target.value)}
+            >
+              {liveStocks.map(s => (
+                <option key={s.symbol} value={s.symbol}>{s.logo} {s.symbol} — {s.name}</option>
+              ))}
+            </select>
+            <span style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#00e4b5', fontSize: 13, fontWeight: 800 }}>▼</span>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: 4 }}>
           {TIMEFRAMES.map(tf => (

@@ -2,13 +2,15 @@ import { useState, useMemo } from 'react'
 import { XSTOCKS_LIST, SECTORS, LIVE_COUNT, COMING_SOON_COUNT, generateHistoricalData, range52w } from '../data/xstocks'
 import { getProtocolsForStock } from '../data/protocols'
 import usePortfolioStore from '../store/portfolioStore'
-import { useLivePrices } from '../hooks/useLiveData'
+import { useLivePrices, useOnchainPrices } from '../hooks/useLiveData'
 import StockLogo from '../components/StockLogo'
 import StockDetailModal, { CopyCA } from '../components/StockDetailModal'
 import { AreaChart, Area, ResponsiveContainer } from 'recharts'
 
 // Symbols to fetch live prices for (only live xStocks)
 const LIVE_SYMBOLS = XSTOCKS_LIST.filter(x => x.status === 'live').map(x => x.symbol)
+// Mints to fetch on-chain price + real 24h change for (only live xStocks)
+const LIVE_MINTS = XSTOCKS_LIST.filter(x => x.status === 'live' && x.mint).map(x => x.mint)
 
 function Sparkline({ stock }) {
   const data = useMemo(() => generateHistoricalData(stock, 14), [stock.symbol])
@@ -32,12 +34,15 @@ export default function Markets() {
   const [search, setSearch] = useState('')
   const [sector, setSector] = useState('all')
   const [status, setStatus] = useState('all')
-  const [sort, setSort] = useState('sector')
+  const [sort, setSort] = useState('name')
   const [selected, setSelected] = useState(null)
   const { watchlist } = usePortfolioStore()
 
   // Live prices from Pyth Network (auto-refresh 30s)
   const { prices, marketOpen, lastUpdate } = useLivePrices(LIVE_SYMBOLS)
+  // On-chain price + real 24h change from Jupiter (auto-refresh 60s) — the values
+  // wallets actually show, and the only 24h that's available for every xStock.
+  const onchain = useOnchainPrices(LIVE_MINTS)
 
   const filtered = useMemo(() => {
     let list = XSTOCKS_LIST
@@ -139,12 +144,15 @@ export default function Markets() {
             {filtered.map(stock => {
               const protos = getProtocolsForStock(stock.symbol)
               const liveEntry = prices[stock.symbol]
-              const displayPrice = liveEntry?.price ?? stock.price
+              const oc = onchain[stock.mint]
+              // Real on-chain price + 24h (Jupiter) first, then Pyth, then static baseline
+              const displayPrice = oc?.priceUsd ?? liveEntry?.price ?? stock.price
               const r = range52w(stock)
               const rangePos = Math.min(Math.max(((displayPrice - r.low) / (r.high - r.low)) * 100, 2), 98)
-              const chg = liveEntry?.change24h ?? (stock.change24h || null)
+              const chg = oc?.change24h != null ? Math.round(oc.change24h * 100) / 100
+                : (liveEntry?.change24h ?? (stock.change24h || null))
               const isUp = (chg ?? 0) >= 0
-              const hasLive = Boolean(liveEntry?.isLive)
+              const hasLive = Boolean(oc || liveEntry?.isLive)
               return (
                 <tr key={stock.symbol} style={{ cursor: 'pointer' }} onClick={() => setSelected(stock)}>
                   <td>

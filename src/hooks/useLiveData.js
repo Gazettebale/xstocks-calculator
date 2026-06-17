@@ -3,10 +3,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchXStockLivePrices, fetchLiveTVLs, fetchDeFiLlamaYields, fetchProtocolTVLHistory, isMarketOpen, formatTVL } from '../services/liveData'
+import { fetchXStockLivePrices, fetchOnchainPrices, fetchLiveTVLs, fetchDeFiLlamaYields, fetchProtocolTVLHistory, isMarketOpen, formatTVL } from '../services/liveData'
 
 const PRICE_REFRESH_MS = 30_000        // 30 s — Pyth rate limit safe
+const ONCHAIN_REFRESH_MS = 60_000      // 60 s — Jupiter on-chain prices
 const TVL_REFRESH_MS   = 5 * 60_000   // 5 min — DeFiLlama polite polling
+
+// ── useOnchainPrices ───────────────────────────────────────────────────────
+/**
+ * Live on-chain USD price + 24h change per mint (Jupiter — the source wallets use).
+ * Real for every tradeable xStock, unlike Pyth's equity feeds (sparse 24h history).
+ * @param {string[]} mints
+ * @returns {{ [mint]: { priceUsd:number, change24h:number|null } }}
+ */
+export function useOnchainPrices(mints = []) {
+  const [prices, setPrices] = useState({})
+  const key = mints.join(',')
+  const doFetch = useCallback(async () => {
+    if (!mints.length) return
+    try { setPrices(await fetchOnchainPrices(mints)) } catch { /* keep previous */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  useEffect(() => {
+    doFetch()
+    const id = setInterval(doFetch, ONCHAIN_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [doFetch])
+  return prices
+}
 
 // ── useLivePrices ─────────────────────────────────────────────────────────────
 /**
