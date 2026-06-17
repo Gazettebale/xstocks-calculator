@@ -326,7 +326,7 @@ function WalletTab({ currentPrices, onSelectStock }) {
   const [imported, setImported] = useState(false)
 
   const enriched = useMemo(() => holdings.map(h => {
-    const price = currentPrices[h.stock.symbol] || h.stock.price
+    const price = h.priceUsd || currentPrices[h.stock.symbol] || h.stock.price
     const value = price * h.qty
     const cb = costBasis[h.mint]
     const pnl = cb ? (price - cb.avgEntry) * h.qty : null

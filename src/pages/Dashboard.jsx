@@ -108,7 +108,7 @@ export default function Dashboard({ setPage }) {
 
   // Mon Portfolio = on-chain wallet holdings + manual positions (held elsewhere)
   const walletValue = useMemo(() =>
-    walletHoldings.reduce((s, h) => s + h.qty * (currentPrices[h.stock.symbol] || h.stock.price), 0),
+    walletHoldings.reduce((s, h) => s + h.qty * (h.priceUsd || currentPrices[h.stock.symbol] || h.stock.price), 0),
     [walletHoldings, currentPrices])
   const positionsValue = useMemo(() =>
     positions.reduce((s, p) => s + (currentPrices[p.symbol] || p.entryPrice) * p.quantity, 0),
@@ -129,7 +129,7 @@ export default function Dashboard({ setPage }) {
     walletHoldings.reduce((s, h) => {
       const cb = costBasis[h.mint]
       if (!cb) return s
-      return s + ((currentPrices[h.stock.symbol] || h.stock.price) - cb.avgEntry) * h.qty
+      return s + ((h.priceUsd || currentPrices[h.stock.symbol] || h.stock.price) - cb.avgEntry) * h.qty
     }, 0),
     [walletHoldings, costBasis, currentPrices])
   const totalPnL = positionsPnL + walletPnL

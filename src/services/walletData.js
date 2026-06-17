@@ -7,6 +7,7 @@
 
 import { STOCKS_BY_MINT } from '../data/xstocks'
 import { fetchLpHoldings } from './lpPositions'
+import { fetchOnchainPrices } from './liveData'
 
 // In production the app talks to its own serverless proxy (/api/rpc), which forwards
 // to the Helius endpoint stored server-side in SOLANA_RPC_URL — the key never reaches
@@ -238,5 +239,17 @@ export async function fetchAllHoldings(address, rpcUrl = DEFAULT_RPC) {
   spot.forEach(h => add(h.mint, h.qty, h.stock, 'wallet'))
   kamino.forEach(h => add(h.mint, h.qty, h.stock, 'kamino'))
   lp.forEach(h => add(h.mint, h.qty, h.stock, 'lp'))
-  return Object.values(byMint).sort((a, b) => b.qty - a.qty)
+  const merged = Object.values(byMint).sort((a, b) => b.qty - a.qty)
+
+  // Attach the on-chain USD price (Jupiter) so displayed values match the user's
+  // wallet. Best-effort: if it fails, the UI falls back to the live Pyth/static price.
+  try {
+    const px = await fetchOnchainPrices(merged.map(h => h.mint))
+    for (const h of merged) {
+      const p = px[h.mint]
+      if (p) { h.priceUsd = p.priceUsd; h.change24h = p.change24h }
+    }
+  } catch { /* keep holdings without on-chain price */ }
+
+  return merged
 }

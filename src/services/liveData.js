@@ -202,6 +202,37 @@ export async function fetchPythPricesAt(feedIds, ts) {
   return out
 }
 
+// ── Jupiter on-chain prices (the USD price wallets actually show) ─────────────
+// Pyth gives the *underlying equity* price; xStock tokens trade at a premium/discount
+// on Solana DEXs. Phantom/Solflare/explorers value tokens at the on-chain DEX price,
+// so to MATCH the user's wallet we value holdings with Jupiter's per-mint usdPrice.
+const JUP_PRICE_URL = 'https://lite-api.jup.ag/price/v3'
+
+/**
+ * Fetch on-chain USD price per xStock mint from Jupiter (CORS-enabled, no key).
+ * @param {string[]} mints
+ * @returns {Promise<{ [mint]: { priceUsd:number, change24h:number|null } }>}
+ */
+export async function fetchOnchainPrices(mints = []) {
+  const ids = [...new Set(mints.filter(Boolean))]
+  if (!ids.length) return {}
+  const out = {}
+  // Chunk the ids list to stay well within Jupiter's per-request cap.
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100)
+    try {
+      const res = await fetch(`${JUP_PRICE_URL}?ids=${chunk.join(',')}`)
+      if (!res.ok) continue
+      const json = await res.json()
+      for (const [mint, v] of Object.entries(json || {})) {
+        const px = Number(v?.usdPrice)
+        if (px > 0) out[mint] = { priceUsd: px, change24h: typeof v?.priceChange24h === 'number' ? v.priceChange24h : null }
+      }
+    } catch { /* best-effort — UI falls back to Pyth/static price */ }
+  }
+  return out
+}
+
 /**
  * Main function: fetch live prices for all xStocks
  * Returns: { xSymbol: { price, change24h, isLive, publishTime } }

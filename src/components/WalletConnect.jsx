@@ -17,7 +17,7 @@ export default function WalletConnect({ compact = false }) {
   }, [])
 
   const totalValue = useMemo(
-    () => holdings.reduce((s, h) => s + h.qty * (h.stock?.price || 0), 0),
+    () => holdings.reduce((s, h) => s + h.qty * (h.priceUsd || h.stock?.price || 0), 0),
     [holdings]
   )
 
