@@ -3,7 +3,7 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid,
 } from 'recharts'
-import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generateProjection, computeDividendProjection, getSectorCagr, range52w } from '../data/xstocks'
+import { XSTOCKS_LIST, generateHistoricalData, generateProjectionFan, generateProjection, computeDividendProjection, getExpectedReturn, getRealVol, getRealStats, range52w } from '../data/xstocks'
 import { useLivePrices } from '../hooks/useLiveData'
 import useWalletStore from '../store/walletStore'
 import WalletConnect from '../components/WalletConnect'
@@ -22,9 +22,10 @@ const TIMEFRAMES = [
   { label: '10A', histDays: 365, projDays: 3650 },
 ]
 
-// Real historical CAGR by sub-sector — single source of truth lives in data/xstocks.js
-function getSectorBase(stock) {
-  return +(getSectorCagr(stock.sector) * 100).toFixed(1)
+// Expected annual return (%), grounded in REAL per-stock history (Yahoo, up to ~50y)
+// when available, else the sector baseline. See getExpectedReturn in data/xstocks.js.
+function getBaseReturn(stock) {
+  return +(getExpectedReturn(stock) * 100).toFixed(1)
 }
 
 // ─── tooltip ─────────────────────────────────────────────────────────────────
@@ -83,8 +84,8 @@ function WalletProjection() {
   const rows = useMemo(() => holdings.map(h => {
     const price = livePrices[h.stock.symbol]?.price || h.stock.price
     const value = price * h.qty
-    const base = getSectorCagr(h.stock.sector) * 100
-    const spread = Math.min((h.stock.beta || 1) * base * 0.7, base * 1.5)
+    const base = getExpectedReturn(h.stock) * 100
+    const spread = Math.max(3, Math.min(35, getRealVol(h.stock) * 100 * 0.7))
     const proj = (bias) => h.qty * price * Math.pow(1 + bias / 100, horizon)
     return { ...h, price, value, cagr: base, prudent: proj(PRUDENT_RATE), bear: proj(base - spread), base: proj(base), bull: proj(base + spread) }
   }).sort((a, b) => b.value - a.value), [holdings, livePrices, horizon])
@@ -202,18 +203,18 @@ export default function Projections() {
 
   const fanData = useMemo(() => generateProjectionFan(stock, timeframe.projDays), [selectedSymbol, timeframe.projDays])
 
-  const sectorBase = getSectorBase(stock)
+  const histBase = getBaseReturn(stock)
   const customVal = parseFloat(customReturn)
-  const baseReturn = !isNaN(customVal) && customReturn !== '' ? customVal : sectorBase
+  const baseReturn = !isNaN(customVal) && customReturn !== '' ? customVal : histBase
 
-  // Beta-calibrated spread: tighter for indices/low-beta, wider for high-beta
-  // Caps spread at 1.5× sector base to avoid unrealistic outliers
-  const betaSpread = Math.min(stock.beta * sectorBase * 0.7, sectorBase * 1.5)
+  // Spread tied to the stock's REAL annualized volatility (≈ a 1σ annual move):
+  // calm names (KO, SPY) stay tight, volatile ones (NVDA, crypto) widen. Clamped.
+  const volSpread = Math.max(3, Math.min(35, getRealVol(stock) * 100 * 0.7))
   const SCENARIOS = [
     { id: 'prudent', label: `🛡️ Prudent ${PRUDENT_RATE}%`, bias: PRUDENT_RATE, color: '#a78bfa' },
-    { id: 'bear', label: '🐻 Bear', bias: baseReturn - betaSpread, color: '#ef4444' },
+    { id: 'bear', label: '🐻 Bear', bias: baseReturn - volSpread, color: '#ef4444' },
     { id: 'base', label: '📊 Base', bias: baseReturn, color: '#60a5fa' },
-    { id: 'bull', label: '🐂 Bull', bias: baseReturn + betaSpread, color: '#10b981' },
+    { id: 'bull', label: '🐂 Bull', bias: baseReturn + volSpread, color: '#10b981' },
   ]
 
   const scenarioData = useMemo(() => {
@@ -278,7 +279,7 @@ export default function Projections() {
   const avgPrice = hist52w.reduce((s, d) => s + d.price, 0) / hist52w.length
   const r52 = range52w(stock)               // effective 52W band (real or derived)
   const posInRange = Math.max(0, Math.min(100, ((stock.price - r52.low) / (r52.high - r52.low)) * 100))
-  const volatilityAnnual = Math.max(stock.beta * 0.18, 0.05) * 100
+  const volatilityAnnual = getRealVol(stock) * 100
 
   // Scenario end prices
   const ends = useMemo(() => Object.fromEntries(
@@ -319,7 +320,7 @@ export default function Projections() {
           Price <span className="gradient-text">Projections</span>
         </h1>
         <p style={{ color: 'var(--text-2)', marginTop: 5, fontSize: 14 }}>
-          Analyse GJR-GARCH + mean reversion · Fan chart probabiliste · Simulateur de position
+          Rendement & volatilité réels (historique jusqu'à 50 ans) · Fan chart probabiliste · Simulateur de position
         </p>
       </div>
 
@@ -341,7 +342,11 @@ export default function Projections() {
             <span style={{ margin: '0 8px', color: 'var(--text-3)' }}>·</span>
             <span style={{ color: '#00e4b5', fontWeight: 600 }}>{stock.sector}</span>
             <span style={{ margin: '0 8px', color: 'var(--text-3)' }}>·</span>
-            <span>Retour hist. estimé: <strong style={{ color: sectorBase > 12 ? '#14f195' : '#fbbf24' }}>{sectorBase}%/an</strong></span>
+            <span>Retour hist.: <strong style={{ color: histBase > 12 ? '#14f195' : '#fbbf24' }}>{histBase}%/an</strong>
+              {getRealStats(stock)
+                ? <span style={{ color: 'var(--text-3)' }}> · {getRealStats(stock).years} ans de données réelles</span>
+                : <span style={{ color: 'var(--text-3)' }}> · estimé secteur (pas d'historique)</span>}
+            </span>
             {customReturn !== '' && <span style={{ marginLeft: 8, color: '#00e4b5', fontWeight: 700 }}>→ Scénario perso: {customReturn}%/an</span>}
           </div>
           <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-3)', maxWidth: 380 }}>
@@ -388,7 +393,7 @@ export default function Projections() {
           <input
             type="number"
             step={1}
-            placeholder={`${sectorBase}%`}
+            placeholder={`${histBase}%`}
             value={customReturn}
             onChange={e => setCustomReturn(e.target.value)}
             style={{
@@ -682,8 +687,8 @@ export default function Projections() {
               color="#fbbf24"
             />
             <StatMini
-              label="CAGR Secteur"
-              value={`${sectorBase}%/an`}
+              label={getRealStats(stock) ? 'Retour hist.' : 'CAGR secteur'}
+              value={`${histBase}%/an`}
               color="#a5b4fc"
             />
           </div>
@@ -835,9 +840,9 @@ export default function Projections() {
         <div className="card" style={{ background: 'rgba(99,102,241,0.04)', borderColor: 'rgba(99,102,241,0.2)' }}>
           <div style={{ fontSize: 13, color: '#a5b4fc', fontWeight: 700, marginBottom: 8 }}>📊 Méthodologie</div>
           <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
-            <strong>Fan chart</strong> : 5 bandes probabilistes (p10/p25/p50/p75/p90) basées sur la volatilité GJR-GARCH avec persistance β=0.83 et asymétrie γ=0.08.<br />
-            <strong>Scénarios</strong> : Drift annualisé + mean reversion vers la moyenne 52S (vitesse 0.8%/jour) + momentum basé sur la position dans le range.<br />
-            <strong>Source</strong> : Volatilité historique calibrée sur le Beta du sous-jacent.
+            <strong>Fan chart</strong> : mouvement brownien géométrique (GBM). La médiane (p50) suit la trajectoire du rendement réel ; les bandes p10/p25/p75/p90 s'élargissent en σ·√t (σ = volatilité réelle), donc l'incertitude grandit correctement sur 1A, 5A, 10A.<br />
+            <strong>Scénarios</strong> : croissance composée Bear/Base/Bull, écart calibré sur la volatilité réelle du titre (≈ ±1σ annuel).<br />
+            <strong>Source</strong> : rendement & volatilité <strong>réels</strong> calculés sur l'historique Yahoo Finance (jusqu'à ~50 ans, prix ajustés splits/dividendes) ; repli sur le CAGR sectoriel + Beta si le titre n'a pas d'historique (IPO récente).
           </div>
         </div>
         <div className="card" style={{ background: 'rgba(245,158,11,0.04)', borderColor: 'rgba(245,158,11,0.2)' }}>

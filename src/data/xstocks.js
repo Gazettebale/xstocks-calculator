@@ -5,6 +5,8 @@
 // Prices = real baseline snapshot (overlaid live by Pyth). Fundamentals indicative.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { HISTORY_STATS } from './history'
+
 export const SECTORS = {
   HARDWARE: 'Hardware & Semi-conducteurs',
   SOFTWARE: 'Logiciels & Cloud',
@@ -1948,6 +1950,32 @@ const SECTOR_CAGR = {
 export function getSectorCagr(sector) { return SECTOR_CAGR[sector] ?? 0.08 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// REAL historical stats (Yahoo Finance, up to ~50y) — see scripts/fetch_history.mjs
+// Grounds projections in real return + volatility instead of sector/Beta guesses.
+// ─────────────────────────────────────────────────────────────────────────────
+export function getRealStats(stock) {
+  return (stock && HISTORY_STATS[stock.underlying]) || null
+}
+
+// Expected annual return (fraction) for projections. Blend of full-history and
+// last-10y real CAGR, capped to a defensible ceiling so one red-hot decade
+// (e.g. NVDA) doesn't project to absurd values. Falls back to the sector baseline
+// for tickers without long history (recent IPOs).
+export function getExpectedReturn(stock) {
+  const h = getRealStats(stock)
+  if (h) return Math.max(-0.02, Math.min(0.22, 0.5 * h.cagr10 + 0.5 * h.cagr))
+  return getSectorCagr(stock?.sector)
+}
+
+// Annualized volatility (fraction) — real (last ~10y) when available, else a
+// Beta-based proxy. Clamped to a sane band. Drives the projection fan width.
+export function getRealVol(stock) {
+  const h = getRealStats(stock)
+  const v = h ? h.vol : Math.max((stock?.beta || 1) * 0.18, 0.05)
+  return Math.max(0.08, Math.min(0.9, v))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PRICE HISTORY — deterministic simulation anchored to the 52W band
 // ─────────────────────────────────────────────────────────────────────────────
 export function generateHistoricalData(stock, days = 365) {
@@ -2001,37 +2029,24 @@ export function generateHistoricalData(stock, days = 365) {
 // PRICE PROJECTION — compound growth based on real historical CAGR
 // ─────────────────────────────────────────────────────────────────────────────
 export function generateProjectionFan(stock, days = 180) {
-  const { low } = range52w(stock)
-  const annualVol = Math.max((stock.beta || 1) * 0.18, 0.05)
-  const annualDrift = SECTOR_CAGR[stock.sector] ?? 0.105
-  const calYears = days / 365
-  const expectedReturn = Math.pow(1 + annualDrift, calYears)
-  const totalVol = annualVol * Math.sqrt(calYears)
-
-  const terminalTargets = {
-    p10: stock.price * Math.max(expectedReturn * (1 - 1.28 * totalVol), 0.1),
-    p25: stock.price * Math.max(expectedReturn * (1 - 0.67 * totalVol), 0.15),
-    p50: stock.price * expectedReturn,
-    p75: stock.price * expectedReturn * (1 + 0.67 * totalVol),
-    p90: stock.price * expectedReturn * (1 + 1.28 * totalVol),
-  }
-  const results = {}
+  // Geometric Brownian Motion grounded in REAL stats: median follows the real
+  // expected-return trajectory, bands widen with σ·√time (σ = real volatility).
+  const S0 = stock.price
+  const g = Math.log(1 + getExpectedReturn(stock)) // continuous drift matching CAGR
+  const sigma = getRealVol(stock)                  // annualized volatility
+  const Z = { p10: -1.2816, p25: -0.6745, p50: 0, p75: 0.6745, p90: 1.2816 }
+  const results = { p10: [], p25: [], p50: [], p75: [], p90: [] }
   const today = new Date()
-  const scenarioKeys = Object.keys(terminalTargets)
-  for (const [key, terminal] of Object.entries(terminalTargets)) {
-    const path = []
-    const logStart = Math.log(stock.price)
-    const logEnd = Math.log(Math.max(terminal, stock.price * 0.05))
-    for (let i = 1; i <= days; i++) {
-      const date = new Date(today)
-      date.setDate(date.getDate() + i)
-      const progress = i / days
-      const basePx = Math.exp(logStart + (logEnd - logStart) * progress)
-      const ripple = Math.sin(i * 0.05 + scenarioKeys.indexOf(key) * 1.2) * basePx * 0.008 * Math.sqrt(progress)
-      const price = Math.max(basePx + ripple, low * 0.3)
-      path.push({ date: date.toISOString().split('T')[0], price: parseFloat(price.toFixed(2)) })
+  for (let i = 1; i <= days; i++) {
+    const date = new Date(today)
+    date.setDate(date.getDate() + i)
+    const tau = i / 365                            // years elapsed
+    const sd = sigma * Math.sqrt(tau)              // uncertainty grows with √time
+    const ds = date.toISOString().split('T')[0]
+    for (const [key, z] of Object.entries(Z)) {
+      const price = S0 * Math.exp(g * tau + z * sd)
+      results[key].push({ date: ds, price: parseFloat(price.toFixed(2)) })
     }
-    results[key] = path
   }
   return results
 }
