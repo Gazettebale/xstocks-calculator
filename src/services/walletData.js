@@ -8,10 +8,23 @@
 import { STOCKS_BY_MINT } from '../data/xstocks'
 import { fetchLpHoldings } from './lpPositions'
 
-// Public CORS-enabled RPC by default. Override with VITE_SOLANA_RPC (e.g. a Helius
-// URL) for reliability, or let the user paste their own RPC in the UI.
-export const DEFAULT_RPC =
-  import.meta.env.VITE_SOLANA_RPC || 'https://solana-rpc.publicnode.com'
+// In production the app talks to its own serverless proxy (/api/rpc), which forwards
+// to the Helius endpoint stored server-side in SOLANA_RPC_URL — the key never reaches
+// the browser. Keyless public RPCs are unreliable for getTokenAccountsByOwner from a
+// browser (publicnode hangs, mainnet-beta 403s), so they are LAST-RESORT fallbacks only.
+// For local `vite` dev (no serverless runtime), set VITE_SOLANA_RPC to a direct RPC URL.
+const PROXY_RPC = '/api/rpc'
+const PUBLIC_RPCS = [
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-rpc.publicnode.com',
+]
+// Back-compat single export (used as the placeholder in the RPC input).
+export const DEFAULT_RPC = import.meta.env.VITE_SOLANA_RPC || PROXY_RPC
+
+// Ordered endpoints to try: the caller's custom RPC, then the server proxy, then publics.
+function rpcEndpoints(rpcUrl) {
+  return [...new Set([rpcUrl, PROXY_RPC, ...PUBLIC_RPCS].filter(Boolean))]
+}
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 const TOKEN_2022_PROGRAM = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
@@ -26,8 +39,23 @@ export function shortAddress(addr, n = 4) {
   return `${addr.slice(0, n)}…${addr.slice(-n)}`
 }
 
-async function rpc(rpcUrl, method, params) {
-  const res = await fetch(rpcUrl, {
+// fetch with a hard timeout. Without this, a stalled RPC leaves the UI stuck on
+// "Lecture on-chain…" forever — AbortController turns the silent hang into a real error.
+export async function fetchWithTimeout(url, opts = {}, ms = 10000) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), ms)
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal })
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('RPC timeout (réseau lent ou endpoint injoignable)')
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function rpcCall(rpcUrl, method, params) {
+  const res = await fetchWithTimeout(rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
@@ -36,6 +64,17 @@ async function rpc(rpcUrl, method, params) {
   const json = await res.json()
   if (json.error) throw new Error(json.error.message || 'RPC error')
   return json.result
+}
+
+// Try each endpoint in turn; first one that answers wins. A dead/slow default no
+// longer blocks the read — we fall through to a working public RPC.
+async function rpc(rpcUrl, method, params) {
+  let lastErr
+  for (const url of rpcEndpoints(rpcUrl)) {
+    try { return await rpcCall(url, method, params) }
+    catch (e) { lastErr = e }
+  }
+  throw lastErr || new Error('Aucun RPC disponible')
 }
 
 async function tokenAccountsFor(rpcUrl, address, programId) {
@@ -96,7 +135,7 @@ const ZERO_PUBKEY = '11111111111111111111111111111111'
 const SF_SCALE = 2 ** 60 // marketValueSf is a scaled fraction: USD = value / 2^60
 
 async function kFetch(path) {
-  const r = await fetch(`${KAMINO_API}${path}`)
+  const r = await fetchWithTimeout(`${KAMINO_API}${path}`, {}, 12000)
   if (!r.ok) throw new Error(`Kamino ${r.status}`)
   return r.json()
 }
@@ -187,7 +226,7 @@ export async function fetchAllHoldings(address, rpcUrl = DEFAULT_RPC) {
   const lp = lpRes.status === 'fulfilled' ? lpRes.value : []
 
   if (spotFailed && !kamino.length && !lp.length) {
-    throw new Error('Lecture wallet impossible (RPC ou réseau)')
+    throw new Error('RPC public injoignable ou surchargé. Ajoute une clé RPC gratuite (Helius) via « RPC avancé » ci-dessous.')
   }
 
   const byMint = {}

@@ -48,9 +48,17 @@ function getAmounts(L, tickLower, tickUpper, sp) {
 // ── RPC (with light retry — public RPCs rate-limit getMultipleAccounts) ───────
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
+// fetch with a hard timeout so a stalled RPC attempt can't hang the wallet read forever
+async function fetchWithTimeout(url, opts, ms = 10000) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), ms)
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }) }
+  finally { clearTimeout(timer) }
+}
+
 async function rpc(rpcUrl, method, params, attempt = 0) {
   try {
-    const res = await fetch(rpcUrl, {
+    const res = await fetchWithTimeout(rpcUrl, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
     })
@@ -60,7 +68,8 @@ async function rpc(rpcUrl, method, params, attempt = 0) {
     if (j.error) throw new Error(j.error.message || 'RPC error')
     return j.result
   } catch (e) {
-    if (attempt < 5) { await sleep(Math.min(800 * 2 ** attempt, 6000)); return rpc(rpcUrl, method, params, attempt + 1) }
+    // bounded retries so LP never stalls the whole read (it's best-effort & degrades to [])
+    if (attempt < 3) { await sleep(Math.min(600 * 2 ** attempt, 3000)); return rpc(rpcUrl, method, params, attempt + 1) }
     throw e
   }
 }
