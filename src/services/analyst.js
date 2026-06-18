@@ -1,11 +1,30 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Analyste IA — client du proxy /api/analyst (Anthropic, clé côté serveur).
-// Construit le system prompt = persona + snapshot des prix live xStocks injecté
-// avant chaque question, puis envoie l'historique de chat au serverless.
+// Analyste IA — BYOK (Bring Your Own Key).
+// L'appel part DIRECT du navigateur vers l'API Anthropic avec la clé de
+// l'utilisateur (stockée uniquement dans son localStorage). Aucune clé ne
+// transite par le serveur xStocks → impossible d'utiliser le crédit d'un autre.
+// header `anthropic-dangerous-direct-browser-access` = mécanisme officiel
+// Anthropic pour autoriser l'appel CORS depuis un navigateur.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ENDPOINT = '/api/analyst'
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 export const ANALYST_MODEL = 'claude-sonnet-4-6'
+const KEY_STORAGE = 'xstocks_anthropic_key'
+
+// ── Gestion de la clé (localStorage, navigateur uniquement) ──────────────────
+export function getApiKey() {
+  try { return localStorage.getItem(KEY_STORAGE) || '' } catch { return '' }
+}
+export function setApiKey(k) {
+  try {
+    if (k) localStorage.setItem(KEY_STORAGE, k)
+    else localStorage.removeItem(KEY_STORAGE)
+  } catch { /* localStorage indispo — la clé restera en mémoire le temps de la session */ }
+}
+export function maskKey(k) {
+  if (!k) return ''
+  return k.length <= 10 ? '••••' : `${k.slice(0, 6)}…${k.slice(-4)}`
+}
 
 export const SYSTEM_PERSONA = `Tu es un analyste macro senior — 20 ans de desk, Goldman puis hedge fund global macro. Tu parles comme sur un trading floor : brutal, direct, dense, zéro langue de bois, zéro disclaimer juridique inutile, zéro "ça dépend" creux.
 
@@ -45,52 +64,69 @@ export function buildSnapshot(rows, { marketOpen } = {}) {
 }
 
 /**
- * Envoie la conversation au proxy serverless et streame la réponse.
- * Le serveur renvoie du texte brut (deltas concaténés) → lecture simple.
- * @param {{ messages:Array<{role,content}>, system:string, model?:string, maxTokens?:number, onDelta?:(chunk:string)=>void, signal?:AbortSignal }} args
+ * Appel DIRECT navigateur → Anthropic, streamé. La clé est celle de l'utilisateur.
+ * @param {{ messages:Array<{role,content}>, system:string, apiKey:string, model?:string, maxTokens?:number, onDelta?:(chunk:string)=>void, signal?:AbortSignal }} args
  * @returns {Promise<string>} le texte complet
  */
-export async function streamAnalyst({ messages, system, model = ANALYST_MODEL, maxTokens = 1200, onDelta, signal }) {
+export async function streamAnalyst({ messages, system, apiKey, model = ANALYST_MODEL, maxTokens = 1200, onDelta, signal }) {
+  if (!apiKey) throw new Error('Ajoute ta clé Anthropic pour utiliser l’analyste')
+
   let res
   try {
-    res = await fetch(ENDPOINT, {
+    res = await fetch(ANTHROPIC_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
       body: JSON.stringify({ model, max_tokens: maxTokens, system, messages, stream: true }),
       signal,
     })
   } catch {
-    throw new Error('Réseau injoignable — /api/analyst inaccessible')
+    throw new Error('Réseau injoignable — appel Anthropic échoué')
   }
 
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     const json = await res.json().catch(() => ({}))
-    if (res.status === 404) {
-      throw new Error("/api/analyst introuvable — lance `npm run dev` (middleware) ou déploie sur Vercel")
+    if (res.status === 401) throw new Error('Clé Anthropic invalide ou révoquée')
+    if (res.status === 429) throw new Error('Limite de débit Anthropic atteinte — réessaie dans un instant')
+    if (res.status === 400 && /credit balance/i.test(json?.error?.message || '')) {
+      throw new Error('Crédit Anthropic épuisé sur cette clé')
     }
-    throw new Error(json.error || `Erreur ${res.status}`)
+    throw new Error(json?.error?.message || `Erreur ${res.status}`)
   }
 
-  // Pas de stream dispo → on lit tout d'un coup (fallback).
-  if (!res.body) {
-    const txt = await res.text()
-    if (!txt.trim()) throw new Error("Réponse vide de l'analyste")
-    onDelta?.(txt)
-    return txt
-  }
-
+  // Parse le flux SSE Anthropic côté client, émet les deltas de texte.
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
+  let buf = ''
   let full = ''
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-    const chunk = decoder.decode(value, { stream: true })
-    if (chunk) {
-      full += chunk
-      onDelta?.(chunk)
+    buf += decoder.decode(value, { stream: true })
+    let sep
+    while ((sep = buf.indexOf('\n\n')) !== -1) {
+      const rawEvent = buf.slice(0, sep)
+      buf = buf.slice(sep + 2)
+      for (const line of rawEvent.split('\n')) {
+        const t = line.replace(/^\s+/, '')
+        if (!t.startsWith('data:')) continue
+        const data = t.slice(5).trim()
+        if (!data || data === '[DONE]') continue
+        let evt
+        try { evt = JSON.parse(data) } catch { continue }
+        if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+          full += evt.delta.text
+          onDelta?.(evt.delta.text)
+        } else if (evt.type === 'error') {
+          throw new Error(evt.error?.message || 'Erreur Anthropic')
+        }
+      }
     }
   }
-  if (!full.trim()) throw new Error("Réponse vide de l'analyste")
+  if (!full.trim()) throw new Error('Réponse vide de l’analyste')
   return full
 }
