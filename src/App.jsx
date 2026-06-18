@@ -4,6 +4,7 @@ import Markets from './pages/Markets'
 import DefiHub from './pages/DefiHub'
 import Projections from './pages/Projections'
 import Portfolio from './pages/Portfolio'
+import Analyst from './pages/Analyst'
 import { LIVE_COUNT, COMING_SOON_COUNT } from './data/xstocks'
 import { SOLANA_PROTOCOLS } from './data/protocols'
 
@@ -13,6 +14,7 @@ const NAV = [
   { id: 'defi',        label: 'DeFi Hub',         icon: '⚡', desc: 'DeFi Solana xStocks' },
   { id: 'projections', label: 'Projections',      icon: '🔭', desc: 'Analyse de prix' },
   { id: 'portfolio',   label: 'Portfolio & DCA',  icon: '💼', desc: 'Mes positions' },
+  { id: 'analyst',     label: 'Analyste IA',      icon: '🧠', desc: 'Macro + xStocks' },
 ]
 
 export default function App() {
@@ -25,6 +27,7 @@ export default function App() {
       case 'defi':        return <DefiHub />
       case 'projections': return <Projections />
       case 'portfolio':   return <Portfolio />
+      case 'analyst':     return <Analyst />
       default:            return <Dashboard setPage={setPage} />
     }
   }

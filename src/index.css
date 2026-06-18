@@ -487,6 +487,18 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   100% { background-position: 200% 0; }
 }
 
+/* Streaming caret (analyste IA) */
+.blink {
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--accent-2);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to { visibility: hidden; }
+}
+
 /* ─── Tooltip ─────────────────────────────────────────────────────────────── */
 [data-tip] { position: relative; cursor: help; }
 [data-tip]:hover::after {
