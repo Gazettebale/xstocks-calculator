@@ -2,14 +2,15 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { useLivePrices, useOnchainPrices } from '../hooks/useLiveData'
 import { isMarketOpen } from '../services/liveData'
 import { STOCKS_BY_SYMBOL } from '../data/xstocks'
-import { SYSTEM_PERSONA, buildSnapshot, streamAnalyst, getApiKey, setApiKey, maskKey } from '../services/analyst'
+import useWalletStore from '../store/walletStore'
+import usePortfolioStore from '../store/portfolioStore'
+import { SYSTEM_PERSONA, buildSnapshot, buildPortfolioBlock, streamAnalyst, getApiKey, setApiKey, maskKey } from '../services/analyst'
 
 // Panier macro injecté dans le contexte de l'analyste (xStocks dispo en live).
 const MACRO_BASKET = [
   'NVDAx', 'AAPLx', 'MSFTx', 'GOOGLx', 'AMZNx', 'METAx', 'TSLAx',
   'AMDx', 'AVGOx', 'SPYx', 'QQQx', 'XOMx', 'JPMx', 'GLDx', 'SLVx',
 ]
-const MINTS = MACRO_BASKET.map((s) => STOCKS_BY_SYMBOL[s]?.mint).filter(Boolean)
 
 const SUGGESTIONS = [
   "NVDA, j'allège ou je garde ?",
@@ -31,8 +32,35 @@ function premiumColor(p) {
 }
 
 export default function Analyst() {
-  const { prices, lastUpdate } = useLivePrices(MACRO_BASKET) // Pyth (sous-jacent)
-  const onchain = useOnchainPrices(MINTS)                    // Jupiter (token on-chain)
+  // Portefeuille : wallet on-chain (read-only) + positions manuelles (DCA).
+  const walletHoldings = useWalletStore((s) => s.holdings)
+  const walletAddr = useWalletStore((s) => s.address)
+  const walletRefresh = useWalletStore((s) => s.refresh)
+  const positions = usePortfolioStore((s) => s.positions)
+
+  // Symboles détenus (wallet + manuel), résolus dans la data xStocks.
+  const heldSymbols = useMemo(() => {
+    const set = new Set()
+    walletHoldings.forEach((h) => h?.stock?.symbol && set.add(h.stock.symbol))
+    positions.forEach((p) => p?.symbol && STOCKS_BY_SYMBOL[p.symbol] && set.add(p.symbol))
+    return [...set]
+  }, [walletHoldings, positions])
+
+  // Macro + détenus → on fetch les prix live de tout (pour valoriser le portefeuille).
+  const allSymbols = useMemo(() => [...new Set([...MACRO_BASKET, ...heldSymbols])], [heldSymbols])
+  const allMints = useMemo(
+    () => allSymbols.map((s) => STOCKS_BY_SYMBOL[s]?.mint).filter(Boolean),
+    [allSymbols]
+  )
+
+  const { prices, lastUpdate } = useLivePrices(allSymbols) // Pyth (sous-jacent)
+  const onchain = useOnchainPrices(allMints)               // Jupiter (token on-chain)
+
+  // Adresse mémorisée mais holdings pas encore chargés (non persistés) → refetch.
+  useEffect(() => {
+    if (walletAddr && walletHoldings.length === 0) walletRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddr])
 
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -71,6 +99,48 @@ export default function Analyst() {
     [prices, onchain]
   )
 
+  // Lignes du portefeuille (wallet + manuel) valorisées au prix live.
+  const portfolioRows = useMemo(() => {
+    const out = []
+    for (const h of walletHoldings) {
+      const sym = h?.stock?.symbol
+      if (!sym || !(h.qty > 0)) continue
+      const meta = STOCKS_BY_SYMBOL[sym]
+      const oc = meta?.mint ? onchain[meta.mint] : null
+      const price = oc?.priceUsd ?? prices[sym]?.price ?? h.stock?.price ?? null
+      out.push({
+        source: 'wallet',
+        symbol: sym,
+        underlying: meta?.underlying ?? sym.replace(/x$/, ''),
+        qty: h.qty,
+        price,
+        value: price != null ? price * h.qty : null,
+        change24h: oc?.change24h ?? prices[sym]?.change24h ?? null,
+      })
+    }
+    for (const p of positions) {
+      const sym = p?.symbol
+      if (!sym || !(p.quantity > 0)) continue
+      const meta = STOCKS_BY_SYMBOL[sym]
+      const oc = meta?.mint ? onchain[meta.mint] : null
+      const price = oc?.priceUsd ?? prices[sym]?.price ?? null
+      out.push({
+        source: 'manuel',
+        symbol: sym,
+        underlying: meta?.underlying ?? sym,
+        qty: p.quantity,
+        price,
+        value: price != null ? price * p.quantity : null,
+        entryPrice: p.entryPrice,
+        pnlPct: price != null && p.entryPrice ? (price / p.entryPrice - 1) * 100 : null,
+        change24h: oc?.change24h ?? prices[sym]?.change24h ?? null,
+      })
+    }
+    return out
+  }, [walletHoldings, positions, onchain, prices])
+
+  const pfTotal = portfolioRows.reduce((s, r) => s + (r.value || 0), 0)
+
   const liveCount = rows.filter((r) => r.underlyingPrice != null || r.tokenPrice != null).length
 
   useEffect(() => {
@@ -108,7 +178,10 @@ export default function Analyst() {
     setBusy(true)
     try {
       const snapshot = buildSnapshot(rows, { marketOpen: isMarketOpen() })
-      const system = `${SYSTEM_PERSONA}\n\n--- CONTEXTE MARCHÉ LIVE (injecté automatiquement) ---\n${snapshot}`
+      const pf = buildPortfolioBlock(portfolioRows)
+      const system =
+        `${SYSTEM_PERSONA}\n\n--- PANORAMA MACRO (live) ---\n${snapshot}` +
+        (pf ? `\n\n--- TON PORTEFEUILLE (live) ---\n${pf}` : '')
       let acc = ''
       await streamAnalyst({
         messages: next,
@@ -154,7 +227,7 @@ export default function Analyst() {
         <div>
           <h1 className="page-title">Analyste IA <span className="gradient-text">macro</span></h1>
           <p className="page-subtitle">
-            Desk senior brutal et concret — il raisonne sur tes prix xStocks live (Pyth + Jupiter), injectés à chaque question.
+            Desk senior brutal et concret — il raisonne sur tes prix xStocks live (Pyth + Jupiter) + ton portefeuille, injectés à chaque question.
           </p>
         </div>
         <span className={`badge ${isMarketOpen() ? 'badge-green' : 'badge-gray'}`}>
@@ -219,13 +292,44 @@ export default function Analyst() {
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 15 }}>🛰️</span>
             <span style={{ fontWeight: 600 }}>Contexte live injecté</span>
-            <span className="badge badge-blue">{liveCount} actifs</span>
+            <span className="badge badge-blue">{liveCount} macro</span>
+            {portfolioRows.length > 0 && <span className="badge badge-green">{portfolioRows.length} portefeuille</span>}
             {lastUpdate && <span className="dim" style={{ fontSize: 11.5 }}>MAJ {new Date(lastUpdate).toLocaleTimeString('fr-FR')}</span>}
           </span>
           <span className="muted" style={{ fontSize: 12 }}>{showCtx ? '▲ masquer' : '▼ voir'}</span>
         </button>
         {showCtx && (
           <div style={{ borderTop: '1px solid var(--border)', padding: '12px 16px' }}>
+            {portfolioRows.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                  <span className="stat-label">Ton portefeuille</span>
+                  <span className="dim" style={{ fontSize: 11.5 }}>≈ ${pfTotal.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+                  {portfolioRows.map((r, i) => (
+                    <div key={`pf-${r.source}-${r.symbol}-${i}`} style={{ background: 'rgba(0,200,150,0.06)', border: '1px solid rgba(0,200,150,0.2)', borderRadius: 8, padding: '8px 11px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{r.underlying}</span>
+                        <span className="dim" style={{ fontSize: 10 }}>{r.source}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                        <span className="muted">{r.qty.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} × ${r.price != null ? r.price.toFixed(2) : '—'}</span>
+                        <span>{r.value != null ? `$${r.value.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}</span>
+                      </div>
+                      {r.pnlPct != null && (
+                        <div style={{ fontSize: 10.5, color: r.pnlPct >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                          PnL {r.pnlPct >= 0 ? '+' : ''}{r.pnlPct.toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ height: 1, background: 'var(--border)', margin: '14px 0 10px' }} />
+                <span className="stat-label">Panorama macro</span>
+                <div style={{ height: 8 }} />
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
               {rows.map((r) => (
                 <div key={r.symbol} style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -258,7 +362,7 @@ export default function Analyst() {
               <div style={{ fontWeight: 700, color: 'var(--text)', fontSize: 16, marginBottom: 6 }}>Le desk est en ligne.</div>
               <div style={{ fontSize: 13 }}>
                 {apiKey
-                  ? `Pose ta question. Les ${liveCount} prix live ci-dessus sont attachés automatiquement avant chaque réponse.`
+                  ? `Pose ta question. ${liveCount} actifs macro${portfolioRows.length ? ` + tes ${portfolioRows.length} positions` : ''} sont injectés avant chaque réponse.${portfolioRows.length ? '' : ' (Connecte ton wallet dans Portfolio pour qu’il voie ton expo.)'}`
                   : 'Ajoute ta clé Anthropic ci-dessus, puis pose ta question.'}
               </div>
             </div>

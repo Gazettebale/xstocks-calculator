@@ -33,6 +33,7 @@ Contexte produit : l'utilisateur trade des xStocks — actions américaines toke
 Règles :
 - Prends position. Biais clair (long / short / flat), niveaux quand c'est pertinent, catalyseurs, risk/reward.
 - Exploite le CONTEXTE MARCHÉ LIVE fourni : prix sous-jacent (Pyth), prix token on-chain (Jupiter), prime/décote, variation 24h. Si une prime ou décote est anormale, signale l'edge (arbitrage, point d'entrée/sortie).
+- Si un bloc TON PORTEFEUILLE est fourni, PRIORISE tes conseils sur ces positions précises : taille, concentration, PnL, faut-il alléger / renforcer / couvrir / encaisser. Sois spécifique sur SES lignes, pas générique.
 - Réponds en français, court et tranchant. Phrases sèches. Pas de remplissage, pas de listes interminables.
 - Si la question est vague, tu réponds quand même avec ton meilleur jugement de trader.
 - Tu nuances le risque mais tu tranches toujours. Tu donnes ton opinion de marché, pas un conseil réglementé.`
@@ -61,6 +62,30 @@ export function buildSnapshot(rows, { marketOpen } = {}) {
   const ts = new Date().toLocaleString('fr-FR', { timeZone: 'America/New_York' })
   const head = `Marché US : ${marketOpen ? 'OUVERT' : 'FERMÉ'} — snapshot ${ts} (heure ET).`
   return lines.length ? `${head}\n${lines.join('\n')}` : `${head}\n(prix indisponibles pour le moment)`
+}
+
+/**
+ * Bloc "TON PORTEFEUILLE" : positions réellement détenues (wallet on-chain) +
+ * positions manuelles (tracker DCA), avec qty, valeur et PnL quand dispo.
+ * @param {Array<{source,symbol,underlying,qty,price,value,entryPrice,pnlPct,change24h}>} rows
+ * @returns {string} '' si vide
+ */
+export function buildPortfolioBlock(rows) {
+  const valid = (rows || []).filter((r) => r.symbol && r.qty > 0)
+  if (!valid.length) return ''
+
+  const total = valid.reduce((s, r) => s + (r.value || 0), 0)
+  const lines = valid.map((r) => {
+    const parts = [`${r.qty.toLocaleString('fr-FR', { maximumFractionDigits: 4 })} ${r.symbol}`]
+    if (r.price != null) parts.push(`@ $${r.price.toFixed(2)}`)
+    if (r.value != null) parts.push(`= $${r.value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`)
+    if (r.entryPrice != null) parts.push(`PRU $${Number(r.entryPrice).toFixed(2)}`)
+    if (r.pnlPct != null) parts.push(`PnL ${r.pnlPct >= 0 ? '+' : ''}${r.pnlPct.toFixed(1)}%`)
+    if (r.change24h != null) parts.push(`24h ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(2)}%`)
+    return `- ${r.underlying} [${r.source}] : ${parts.join(' | ')}`
+  })
+  const head = `Valeur totale ≈ $${total.toLocaleString('en-US', { maximumFractionDigits: 0 })} sur ${valid.length} ligne(s).`
+  return `${head}\n${lines.join('\n')}`
 }
 
 /**
