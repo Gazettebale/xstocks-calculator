@@ -4,7 +4,7 @@ import { isMarketOpen } from '../services/liveData'
 import { STOCKS_BY_SYMBOL } from '../data/xstocks'
 import useWalletStore from '../store/walletStore'
 import usePortfolioStore from '../store/portfolioStore'
-import { SYSTEM_PERSONA, buildSnapshot, buildPortfolioBlock, streamAnalyst, getApiKey, setApiKey, maskKey } from '../services/analyst'
+import { SYSTEM_PERSONA, buildSnapshot, buildPortfolioBlock, buildMarketLines, detectMentionedSymbols, fetchLiveForSymbols, streamAnalyst, getApiKey, setApiKey, maskKey } from '../services/analyst'
 
 // Panier macro injecté dans le contexte de l'analyste (xStocks dispo en live).
 const MACRO_BASKET = [
@@ -177,11 +177,21 @@ export default function Analyst() {
     if (taRef.current) taRef.current.style.height = '46px'
     setBusy(true)
     try {
+      // JIT : marchés cités hors contexte → prix live récupérés pour cette question.
+      let extraRows = []
+      try {
+        const already = new Set([...allSymbols, ...portfolioRows.map((r) => r.symbol)])
+        const toFetch = detectMentionedSymbols(text).filter((s) => !already.has(s))
+        if (toFetch.length) extraRows = await fetchLiveForSymbols(toFetch)
+      } catch { /* best-effort — l'analyste garde son garde-fou anti-invention */ }
+
       const snapshot = buildSnapshot(rows, { marketOpen: isMarketOpen() })
       const pf = buildPortfolioBlock(portfolioRows)
+      const extra = extraRows.length ? buildMarketLines(extraRows) : ''
       const system =
         `${SYSTEM_PERSONA}\n\n--- PANORAMA MACRO (live) ---\n${snapshot}` +
-        (pf ? `\n\n--- TON PORTEFEUILLE (live) ---\n${pf}` : '')
+        (pf ? `\n\n--- TON PORTEFEUILLE (live) ---\n${pf}` : '') +
+        (extra ? `\n\n--- MARCHÉS DEMANDÉS (live, récupérés pour cette question) ---\n${extra}` : '')
       let acc = ''
       await streamAnalyst({
         messages: next,

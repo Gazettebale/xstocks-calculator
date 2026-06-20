@@ -7,6 +7,9 @@
 // Anthropic pour autoriser l'appel CORS depuis un navigateur.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { XSTOCKS_LIST, STOCKS_BY_SYMBOL } from '../data/xstocks'
+import { fetchXStockLivePrices, fetchOnchainPrices } from './liveData'
+
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 export const ANALYST_MODEL = 'claude-sonnet-4-6'
 const KEY_STORAGE = 'xstocks_anthropic_key'
@@ -34,6 +37,7 @@ Règles :
 - Prends position. Biais clair (long / short / flat), niveaux quand c'est pertinent, catalyseurs, risk/reward.
 - Exploite le CONTEXTE MARCHÉ LIVE fourni : prix sous-jacent (Pyth), prix token on-chain (Jupiter), prime/décote, variation 24h. Si une prime ou décote est anormale, signale l'edge (arbitrage, point d'entrée/sortie).
 - Si un bloc TON PORTEFEUILLE est fourni, PRIORISE tes conseils sur ces positions précises : taille, concentration, PnL, faut-il alléger / renforcer / couvrir / encaisser. Sois spécifique sur SES lignes, pas générique.
+- Tu peux parler de N'IMPORTE QUEL marché, même absent du contexte. Mais ne fabrique JAMAIS un prix « live » que tu n'as pas : si le prix d'un actif n'est pas fourni dans le contexte ci-dessous, dis-le explicitement et raisonne qualitativement (tendance, catalyseurs, niveaux de mémoire signalés comme approximatifs). Quand un prix EST fourni (y compris dans MARCHÉS DEMANDÉS), utilise-le tel quel.
 - Réponds en français, court et tranchant. Phrases sèches. Pas de remplissage, pas de listes interminables.
 - Si la question est vague, tu réponds quand même avec ton meilleur jugement de trader.
 - Tu nuances le risque mais tu tranches toujours. Tu donnes ton opinion de marché, pas un conseil réglementé.`
@@ -44,21 +48,28 @@ Règles :
  * @param {{ marketOpen?: boolean }} opts
  * @returns {string}
  */
-export function buildSnapshot(rows, { marketOpen } = {}) {
-  const lines = rows
-    .filter((r) => r.underlyingPrice != null || r.tokenPrice != null)
-    .map((r) => {
-      const parts = []
-      if (r.underlyingPrice != null) parts.push(`sous-jacent $${r.underlyingPrice.toFixed(2)}`)
-      if (r.tokenPrice != null) parts.push(`token $${r.tokenPrice.toFixed(2)}`)
-      if (r.underlyingPrice && r.tokenPrice) {
-        const p = (r.tokenPrice / r.underlyingPrice - 1) * 100
-        parts.push(`prime ${p >= 0 ? '+' : ''}${p.toFixed(2)}%`)
-      }
-      if (r.change24h != null) parts.push(`24h ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(2)}%`)
-      return `- ${r.underlying} (${r.symbol}) : ${parts.join(' | ')}`
-    })
+function marketLine(r) {
+  const parts = []
+  if (r.underlyingPrice != null) parts.push(`sous-jacent $${r.underlyingPrice.toFixed(2)}`)
+  if (r.tokenPrice != null) parts.push(`token $${r.tokenPrice.toFixed(2)}`)
+  if (r.underlyingPrice && r.tokenPrice) {
+    const p = (r.tokenPrice / r.underlyingPrice - 1) * 100
+    parts.push(`prime ${p >= 0 ? '+' : ''}${p.toFixed(2)}%`)
+  }
+  if (r.change24h != null) parts.push(`24h ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(2)}%`)
+  return `- ${r.underlying} (${r.symbol}) : ${parts.length ? parts.join(' | ') : 'prix live indisponible'}`
+}
 
+/** Lignes de marché brutes (sans en-tête) — pour un bloc additionnel. */
+export function buildMarketLines(rows) {
+  return (rows || []).filter((r) => r.symbol).map(marketLine).join('\n')
+}
+
+/** Bloc panorama macro injecté dans le system prompt. */
+export function buildSnapshot(rows, { marketOpen } = {}) {
+  const lines = (rows || [])
+    .filter((r) => r.underlyingPrice != null || r.tokenPrice != null)
+    .map(marketLine)
   const ts = new Date().toLocaleString('fr-FR', { timeZone: 'America/New_York' })
   const head = `Marché US : ${marketOpen ? 'OUVERT' : 'FERMÉ'} — snapshot ${ts} (heure ET).`
   return lines.length ? `${head}\n${lines.join('\n')}` : `${head}\n(prix indisponibles pour le moment)`
@@ -86,6 +97,76 @@ export function buildPortfolioBlock(rows) {
   })
   const head = `Valeur totale ≈ $${total.toLocaleString('en-US', { maximumFractionDigits: 0 })} sur ${valid.length} ligne(s).`
   return `${head}\n${lines.join('\n')}`
+}
+
+// ── Détection des marchés cités + fetch live à la demande ────────────────────
+// Garantit une réponse correcte même pour un xStock hors du contexte par défaut :
+// on scanne la question, on récupère le prix live des actifs cités, on les injecte.
+const _bySymbolUpper = new Map() // 'PLTRX'    -> 'PLTRx'
+const _byUnderlying = new Map()  // 'PLTR'     -> 'PLTRx'
+const _byName = new Map()        // 'palantir' -> 'PLTRx'
+const _NAME_STOP = new Set(['THE', 'INC', 'CORP', 'CORPORATION', 'LTD', 'PLC', 'GROUP', 'HOLDINGS', 'COMPANY', 'TRUST', 'FUND', 'ETF', 'CLASS'])
+for (const s of XSTOCKS_LIST) {
+  if (s.status !== 'live') continue
+  _bySymbolUpper.set(s.symbol.toUpperCase(), s.symbol)
+  if (s.underlying) _byUnderlying.set(s.underlying.toUpperCase(), s.symbol)
+  if (s.name) {
+    const w = s.name.split(/[^A-Za-z]+/).filter(Boolean)[0]
+    if (w && w.length >= 4 && !_NAME_STOP.has(w.toUpperCase())) {
+      const k = w.toLowerCase()
+      if (!_byName.has(k)) _byName.set(k, s.symbol)
+    }
+  }
+}
+
+/**
+ * Repère les xStocks cités dans un texte (symbole xStock, ticker sous-jacent, ou nom).
+ * @returns {string[]} symboles xStock (max `limit`)
+ */
+export function detectMentionedSymbols(text, { limit = 8 } = {}) {
+  if (!text) return []
+  const found = new Set()
+  for (const tok of text.split(/[^A-Za-z]+/)) {
+    if (!tok || found.size >= limit) continue
+    const up = tok.toUpperCase()
+    if (_bySymbolUpper.has(up)) { found.add(_bySymbolUpper.get(up)); continue }
+    if (_byUnderlying.has(up)) {
+      // tickers courts (≤2) : seulement écrits en MAJUSCULES (évite les faux positifs)
+      if (up.length >= 3 || tok === up) found.add(_byUnderlying.get(up))
+      continue
+    }
+    const low = tok.toLowerCase()
+    if (low.length >= 4 && _byName.has(low)) found.add(_byName.get(low))
+  }
+  return [...found].slice(0, limit)
+}
+
+/**
+ * Récupère le prix live (Pyth sous-jacent + Jupiter token) pour des symboles
+ * xStock, à la demande. Jupiter couvre tous les xStocks négociables.
+ * @returns {Promise<Array<{symbol,underlying,name,underlyingPrice,tokenPrice,change24h}>>}
+ */
+export async function fetchLiveForSymbols(symbols) {
+  const syms = [...new Set(symbols)].filter((s) => STOCKS_BY_SYMBOL[s])
+  if (!syms.length) return []
+  const mints = syms.map((s) => STOCKS_BY_SYMBOL[s].mint).filter(Boolean)
+  const [pyth, jup] = await Promise.all([
+    fetchXStockLivePrices(syms).catch(() => ({})),
+    fetchOnchainPrices(mints).catch(() => ({})),
+  ])
+  return syms.map((sym) => {
+    const meta = STOCKS_BY_SYMBOL[sym]
+    const p = pyth[sym]
+    const oc = meta.mint ? jup[meta.mint] : null
+    return {
+      symbol: sym,
+      underlying: meta.underlying ?? sym.replace(/x$/, ''),
+      name: meta.name ?? '',
+      underlyingPrice: p?.price ?? null,
+      tokenPrice: oc?.priceUsd ?? null,
+      change24h: oc?.change24h ?? p?.change24h ?? null,
+    }
+  })
 }
 
 /**
